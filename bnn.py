@@ -1,0 +1,338 @@
+import torch
+import torch.nn as nn
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+def gauss_logpdf(x, mu, s):
+    normalized_x = (x - mu) / s
+    logprob = (-1 * (normalized_x ** 2) / 2) - 0.5 * np.log(2 * np.pi)
+    return logprob
+
+class BNNLayer(nn.Module):
+    def __init__(self, input_dim=30, output_dim=2, prior_mu=0, prior_s=0.01, preset=False):
+        super(BNNLayer, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.prior_mu = prior_mu
+        self.prior_s = prior_s
+
+        # Means of weights, shape input by output
+        # self.W_mu_DO = nn.Parameter(torch.Tensor(input_dim, output_dim).normal_(prior_mu, prior_s))
+
+        self.W_mu_DO = nn.Parameter(torch.Tensor(input_dim, output_dim).normal_(0, 0.1))
+        # Log std of weights, shape input by output
+        self.W_log_s_DO = nn.Parameter(torch.Tensor(input_dim, output_dim).normal_(0, 0.1))
+
+        # Means of biases, shape output dim
+        self.b_mu_O = nn.Parameter(torch.Tensor(output_dim).normal_(0, 0.1))
+        # Log stds of biases, shape output dim
+        self.b_log_s_O = nn.Parameter(torch.Tensor(output_dim).normal_(0, 0.1))
+
+        if preset != False:
+            W_mu, b_mu = preset['W_mu'], preset['b_mu']
+            self.W_mu_DO = nn.Parameter(torch.Tensor(W_mu))
+            self.W_log_s_DO = nn.Parameter(torch.Tensor([-3, -3]))
+            self.b_mu_O = nn.Parameter(torch.Tensor(b_mu))
+            self.b_log_s_O = nn.Parameter(torch.Tensor([-3, -3]))
+
+        self.log_prior = 0
+        self.log_post_est = 0
+        
+
+    def W_b_by_reparam(self):      
+        # Reparameterization
+        rand_norm_DO = torch.Tensor(self.input_dim, self.output_dim).normal_(0, 1)
+        rand_norm_O = torch.Tensor(self.output_dim).normal_(0, 1)
+        W_DO = self.W_mu_DO + rand_norm_DO * torch.exp(self.W_log_s_DO)
+        b_O = self.b_mu_O + rand_norm_O * torch.exp(self.b_log_s_O)
+        return (W_DO, b_O)
+
+
+
+    # forward for one layer will sample the weights for that layer, and output 
+    # the full output of that layer!
+
+    # Return matrix [num_preds x output_size]
+    # if predict=False (i.e. being used in training), then we reuse same posterior 
+    # draw for each prediction. If predict = True, then we use different draws from the
+    # posterior for each vectorized prediction
+
+    # D is input dimension, O is output dimension 
+    def forward(self, X_ND, predict=False, num_preds=1):
+        # IMPLEMENT IF PREDICT, REUSE SAME POSTERIOR DRAW IN PREDICTION
+
+        if predict:
+            # print("W_mu_DO shape: ", self.W_mu_DO.shape)
+            (W_DO, b_O) = self.W_b_by_reparam()
+            # print("W_DO", W_DO)
+            # print("X_ND[1]", X_ND[1])
+            pred = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
+            # print("pred dims: ", pred.shape)
+            return pred
+
+        (W_DO, b_O) = self.W_b_by_reparam()
+
+        # Note: Updating batch by batch, not datapoint by datapoint
+        # OK, more than one prediction at once getting very confusing. Leaving as 
+        # is for now, come back to it later to decide how good of an idea it actually is
+        if num_preds > 1:
+            outputs = []
+            log_priors = []
+            log_post_ests = []
+            for i in range(num_preds):
+                output = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
+                outputs.append(output.reshape(1, output.shape[0], output.shape[1]))
+                log_prior = gauss_logpdf(W_DO, self.prior_mu, self.prior_s).sum() + gauss_logpdf(b_O, self.prior_mu, self.prior_s).sum()
+                log_priors.append(log_prior.reshape(1, 1))
+                log_post_est = (gauss_logpdf(W_DO, self.W_mu_DO, torch.exp(self.W_log_s_DO)).sum() +
+                                gauss_logpdf(b_O, self.b_mu_O, torch.exp(self.b_log_s_O)).sum())
+                log_post_ests.append(log_post_est.reshape(1, 1))
+            output = torch.cat(outputs, dim=0)
+            self.log_prior = torch.cat(log_priors, dim=0)
+            self.log_post_ests = torch.cat(log_post_ests, dim=0)            
+
+        elif num_preds == 1:
+            output = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
+            # print("output shape: ", output.shape)
+            self.log_prior = (gauss_logpdf(W_DO, self.prior_mu, self.prior_s).sum() + 
+                              gauss_logpdf(b_O, self.prior_mu, self.prior_s).sum()) 
+
+            self.log_post_est = (gauss_logpdf(W_DO, self.W_mu_DO, torch.exp(self.W_log_s_DO)).sum() +
+                                 gauss_logpdf(b_O, self.b_mu_O, torch.exp(self.b_log_s_O)).sum())
+        else:
+            raise(ValueError)
+        return output
+
+
+class BNN(nn.Module):
+    def __init__(self, input_dim, prior_mu=0, prior_s=0.01, linear_regression=False, preset=False):
+          super(BNN, self).__init__()
+          self.input_dim = input_dim
+          self.hidden_1_dim = 5
+          self.hidden_2_dim = 5
+          self.output_dim = 2
+          self.prior_mu = prior_mu
+          self.prior_s = prior_s
+
+          self.linear_regression = linear_regression
+
+          if not linear_regression:
+              self.l1 = BNNLayer(self.input_dim, self.hidden_1_dim, self.prior_mu, self.prior_s)
+              self.activ_1_2 = nn.LeakyReLU()
+              self.l2 = BNNLayer(self.hidden_1_dim, self.hidden_2_dim, self.prior_mu, self.prior_s)
+              self.activ_2_3 = nn.LeakyReLU()
+              self.l3 = BNNLayer(self.hidden_2_dim, self.output_dim, self.prior_mu, self.prior_s)
+          else:
+              self.l1 = BNNLayer(self.input_dim, 2, self.prior_mu, self.prior_s, preset=preset) 
+          
+          # Not used for std dev prediction
+          self.classification_threshold = 0.5
+          self.pred_sigmoid = nn.Sigmoid()
+
+
+    def forward(self, X_ND, predict=False, num_preds=1):
+          if not self.linear_regression:
+              output = self.activ_1_2(self.l1(X_ND, predict, num_preds))
+              output = self.activ_2_3(self.l2(output, predict, num_preds))
+              output = self.l3(output, predict, num_preds)
+          else:
+              output = self.l1(X_ND, predict, num_preds)
+
+          # format of this might be weird, but don't really need var anymore
+          if predict:
+              continuous_pred = output[:,0]
+
+              # everything below return statement for classification
+              return continuous_pred
+
+              # print("continuous pred: ", continuous_pred[:5].detach().numpy())
+
+              # need to look if 1 is churn or not churn in dataset
+              prob_of_one = self.pred_sigmoid(continuous_pred)
+              prob_of_one = prob_of_one.detach().numpy()
+
+              # print("prob of 1: ", prob_of_one[:5])
+
+              pred = (prob_of_one > self.classification_threshold).astype(int)
+              # print("pred: ", pred[:5])
+              output = pred
+
+          return output
+
+    def calc_total_log_prior_log_post_est(self):
+          if not self.linear_regression:
+            total_log_prior = self.l1.log_prior + self.l2.log_prior + self.l3.log_prior
+            total_log_post_est = self.l1.log_post_est + self.l2.log_post_est + self.l3.log_post_est
+            return total_log_prior, total_log_post_est
+          else:
+            return self.l1.log_prior, self.l1.log_post_est
+    # Returns churn/not binary churn predictions (nx1) for data X (nxd)
+    # as numpy?? tensor??
+
+
+class BNNBayesbyBackprop(nn.Module):
+    # Preset argument for use with debugging. For linear regression, if preset, pass dictionary of form {'W_mu': '', 'b_mu': ''}
+    # where W_mu and b_mu will be used as means for the q distribution. 
+    def __init__(self, nn_dims=None, prior_mu=10, prior_s=0.05, num_MC_samples=100, linear_regression=False, preset=False, classification=False):
+        '''
+        nn_dims : list of layer sizes from input to output layer (of form: [input_dim, hidden_layer_1_dim, ..., output_dim])
+          Note: optim taking in model.parameters has to have them specified as individual self.linear1, self.linear2 attributes,
+          not as a list of nn.linear's
+          @TODO: For now, assume just one input layer, one output layer, no hidden layers for linear model
+        '''
+        super(BNNBayesbyBackprop, self).__init__()
+        
+        self.prior_mu = prior_mu
+        self.prior_s = prior_s
+        self.num_MC_samples = num_MC_samples
+        self.classification = classification
+
+        # self.model = BNN(38, self.prior_mu, self.prior_s)
+        self.model = BNN(2, self.prior_mu, self.prior_s, linear_regression, preset)
+
+
+    # @TODO: Does this scale with "batch size" or "traning set size" or what?
+    def MC_elbo(self, X_ND, y_N, curr_batch, n_batches, epoch):
+        # out[0] is the predicted mean, out[1] is the predicted std_dev
+        aggregate_log_prior, aggregate_log_post_est, aggregate_log_likeli, aggregate_log_s_N = 0.0, 0.0, 0.0, 0.0
+        for i in range(self.num_MC_samples):
+            nn_output_mu_N = self.model(X_ND)
+
+            nn_output_log_s_N = nn_output_mu_N[:,1]
+            if epoch < 15:
+                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
+            elif (epoch >= 15) and (epoch < 20):
+                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(3))
+
+            # Artificial average value 
+            #nn_output_mu_N[:,0] = torch.mm(X_ND, torch.tensor(W).float()) + torch.tensor(b)
+            #nn_output_log_s_N = torch.ones(nn_output_mu_N[:,1].shape)
+
+
+            # Aggregated probabilities across an entire batch/trainset for each sample
+            sample_log_likeli = self.likelihood_est(y_N, nn_output_mu_N[:,0], nn_output_log_s_N)
+            sample_log_prior, sample_log_post_est = self.model.calc_total_log_prior_log_post_est()
+
+            # Aggregating probabilities across all samples
+            aggregate_log_prior += sample_log_prior
+            aggregate_log_post_est += sample_log_post_est
+            aggregate_log_likeli += sample_log_likeli
+            # aggregate_log_s_N += nn_output_log_s_N.mean()
+
+        if curr_batch == (n_batches - 1):
+          #We assume that it is a scalar representing the total log prior(w, b) across all samples
+          print("mean log prior ", aggregate_log_prior.detach().numpy() / self.num_MC_samples)
+          print("mean log post est ", aggregate_log_post_est.detach().numpy() / self.num_MC_samples)
+          print("mean likelihood est ", aggregate_log_likeli.detach().numpy() / self.num_MC_samples)
+          # print("mean log s N est ", 1e6 * aggregate_log_s_N.detach().numpy() / self.num_MC_samples)
+          # print("elbo ", (aggregate_log_prior - aggregate_log_post_est) / self.num_MC_samples)
+          # return -1 * (aggregate_log_prior - aggregate_log_post_est) / self.num_MC_samples
+        return (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples) #+ 1e6 * torch.exp(aggregate_log_s_N) / self.num_MC_samples
+
+    # @TODO: is it gauss_logpdf(y, sigmoid(pred_y), exp(nn_ouput_log_s_N))? or is it: MC sample: sigmoid(sample from N(pred_y, exp(nn_ouput_log_s_N))), threshold at [0.5]?
+    def likelihood_est(self, y_N, nn_output_mu_N, nn_output_log_s_N, MC_samples=20):
+        pred_thresh = 0.5
+        
+
+        if self.classification:
+            # s_NxMC is NxMC where each row holds MC samples, s ~ N(mu(X_n), log_s(X_n))
+            # where mu(X_n) and log_s(X_n) are the BNN's predicted values for nth instances
+            s_NxMC = torch.empty(size=(y_N.shape[0], MC_samples), requires_grad=False)
+            for i in range(MC_samples): 
+#                 s_NxMC[:,i] = torch.normal(nn_output_mu_N,
+#                                           torch.exp(nn_output_log_s_N))
+                s_NxMC[:,i] = nn_output_mu_N + torch.normal(0, 1) * torch.exp(nn_output_log_s_N)
+            sigmoid = nn.Sigmoid()
+            probs_of_one_NxMC = sigmoid(s_NxMC)
+            avg_prob_of_one_N = probs_of_one_NxMC.mean(dim=1)
+            # print("shapes match: ", avg_prob_of_one_NxMC.shape == y_N.shape)
+    
+            likelihood_N = torch.empty(size=y_N.shape)
+            likelihood_N[y_N == 0] = 1 - avg_prob_of_one_N[y_N == 0]
+            likelihood_N[y_N == 1] = avg_prob_of_one_N[y_N == 1]
+            log_likelihood_N = torch.log(likelihood_N)
+            log_likelihood = log_likelihood_N.sum()
+            # print("prob of one: ", avg_prob_of_one_N[:5].detach().numpy())
+            # print("real ", y_N[:5].detach().numpy())
+            return log_likelihood_N
+
+        else:
+            stds = torch.exp(nn_output_log_s_N)#10 * torch.ones([y_N.shape[0]], dtype=torch.float64) #
+            log_likelihood_N = gauss_logpdf(y_N.reshape(-1), nn_output_mu_N, stds)
+            # log_likelihood_N = gauss_logpdf(y_N.reshape(-1), nn_output_mu_N, 0.01)
+            log_likelihood = log_likelihood_N.sum()
+            return log_likelihood
+
+    def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False):
+        n_batches = int(np.ceil(X.shape[0] / batch_size))
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+
+        X_batch = torch.Tensor()
+        y_batch = torch.Tensor()
+        loss_by_epoch = []
+        e = 0
+        for e in range(n_epochs):
+            batch_losses = []
+            for batch_num in range(n_batches):
+                # print("batch: ", b, " / ", n_batches)
+                batch_start_i = batch_size * batch_num
+                if (batch_size * (batch_num + 1)) < X.shape[0]:
+                    batch_end_i = batch_size * (batch_num + 1)
+                else:
+                    batch_end_i = X.shape[0]
+
+                self.model.zero_grad()
+                X_batch = torch.Tensor(X[batch_start_i : batch_end_i])
+                y_batch = torch.Tensor(y[batch_start_i : batch_end_i])
+
+                
+                loss = self.MC_elbo(X_batch, y_batch, batch_num, n_batches, e)
+                old_weights1 = self.model.l1.W_mu_DO.detach().numpy()[:,0].flatten()
+                old_weights2 = self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten()
+                old_bias = self.model.l1.b_mu_O.detach().numpy().flatten()
+                batch_losses.append(loss.detach().numpy())
+                print("loss shape: ", loss.shape)
+                loss.backward()
+                optimizer.step()
+            print("grads ", self.model.l1.W_mu_DO.grad, "\n")
+            print("change in w1: ", self.model.l1.W_mu_DO.detach().numpy()[:,0].flatten() - old_weights1,
+                   "\ncur w1: ", self.model.l1.W_mu_DO.detach().numpy()[:,0].flatten(),
+                   "\nold w1: ", old_weights1)
+            print("change in w2: ", self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten() - old_weights2,
+                   "\ncur w2: ", self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten(),
+                   "\nold w2: ", old_weights2)
+            
+            print("change in b: ", self.model.l1.b_mu_O.detach().numpy().flatten() - old_bias,
+                  "\ncur b: ", self.model.l1.b_mu_O.detach().numpy().flatten(),
+                  "\nold b: ", old_bias)
+
+            print("full weights: \n", self.model.l1.W_mu_DO.detach().numpy())
+            
+            output = self.model(X_batch)
+
+
+            actual_y_means = torch.mm(X_batch, torch.tensor(W).float()) + torch.tensor(b) # torch.mm(X_batch, torch.tensor(np.array([1, 0.2]).reshape(-1, 1)).float()) + torch.tensor(-5)
+
+            X_full = torch.Tensor(X)
+            y_full = torch.Tensor(y)
+
+
+            pred = self.model(X_full, predict=True)
+            
+            # classification accuracy
+            # acc = (pred == y_full.numpy()).astype(int).sum() / y_full.shape[0]
+
+            # regression accuracy
+            acc = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
+
+            cur_epoch_loss = np.array(batch_losses).sum()
+            print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", acc, '\n')
+            # print()
+            # print("pred: ", pred.detach().numpy()[:5])
+            # print("real: ", y_full.numpy().reshape(-1)[:5])
+            loss_by_epoch.append(cur_epoch_loss)
+            # e += 1
+
+        if plot:
+            plt.plot([i for i in range(n_epochs)], loss_by_epoch)
