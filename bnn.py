@@ -68,7 +68,6 @@ class BNNLayer(nn.Module):
             # print("W_DO", W_DO)
             # print("X_ND[1]", X_ND[1])
             pred = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
-            # print("pred dims: ", pred.shape)
             return pred
 
         (W_DO, b_O) = self.W_b_by_reparam()
@@ -148,11 +147,10 @@ class BNN(nn.Module):
 
                   # need to look if 1 is churn or not churn in dataset
                   prob_of_one = self.pred_sigmoid(continuous_pred)
-                  prob_of_one = prob_of_one.detach().numpy()
 
-                  pred = (prob_of_one > self.classification_threshold).astype(int)
-                  print("pred: ", pred[:7])
-                  print("prob of 1: ", prob_of_one[:5])
+                  pred = (prob_of_one > self.classification_threshold)
+#                   print("pred: ", pred[:7])
+#                   print("prob of 1: ", prob_of_one[:5])
 
                   output = pred
               else:
@@ -248,16 +246,21 @@ class BNNBayesbyBackprop(nn.Module):
                                           0.1)
 
             if self.last_batch == True: 
-                print("continuous_pred: ", nn_output_mu_N.detach().numpy()[:5])
+#                 print("continuous_pred: ", nn_output_mu_N.detach().numpy()[:5])
+                pass
             sigmoid = nn.Sigmoid()
             probs_of_one_NxMC = sigmoid(s_NxMC)
             avg_prob_of_one_N = probs_of_one_NxMC.mean(dim=1)
 
             # print("shapes match: ", avg_prob_of_one_NxMC.shape == y_N.shape)
     
+#             print("nn_output_mu_N min: ", np.min(nn_output_mu_N.detach().numpy()))
+#             print("nn_output_mu_N max: ", np.max(nn_output_mu_N.detach().numpy()))
             likelihood_N = torch.empty(size=y_N.shape)
             likelihood_N[y_N == 0] = 1 - avg_prob_of_one_N[y_N == 0]
             likelihood_N[y_N == 1] = avg_prob_of_one_N[y_N == 1]
+#             print("likelihood_N min:", np.min(likelihood_N.detach().numpy()), "\tlikelihood_N max:", np.max(likelihood_N.detach().numpy()))
+#             print("likelihood_N prod: ", np.prod(likelihood_N.detach().numpy()))
             log_likelihood_N = torch.log(likelihood_N)
             log_likelihood = log_likelihood_N.sum()
             # print("prob of one: ", avg_prob_of_one_N[:5].detach().numpy())
@@ -318,7 +321,16 @@ class BNNBayesbyBackprop(nn.Module):
                   "\nold b: ", old_bias)
 
             print("full weights: \n", self.model.l1.W_mu_DO.detach().numpy())
-            
+            b1 = self.model.l1.b_mu_O.detach().numpy()[0]
+            w1 = self.model.l1.W_mu_DO.detach().numpy()[0][0]
+            x1 = np.random.uniform(-8, 8, (2,100))
+            y1 = x1 * w1 + b1
+            X_batch_np = X_batch.detach().numpy() 
+            y_batch_np = y_batch.detach().numpy()
+            plt.scatter(X_batch_np[y_batch_np == 0, 0], X_batch_np[y_batch_np == 0, 1], c='red', alpha=.2)
+            plt.scatter(X_batch_np[y_batch_np == 1, 0], X_batch_np[y_batch_np == 1, 1], c='blue', alpha=.2)
+            plt.plot(x1, y1)
+            plt.show()
             output = self.model(X_batch)
 
 
@@ -333,12 +345,14 @@ class BNNBayesbyBackprop(nn.Module):
 
             # classification accuracy
             if self.classification:
-                acc = (pred == y_full.numpy()).astype(int).sum() / y_full.shape[0]
+                print(pred.shape)
+                print(y_full.shape)
+                acc = (pred.detach().numpy() == y_full.numpy()).astype(int).sum() / y_full.shape[0]
                 print("real: ", y_full.numpy().flatten()[:7])
                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\n')
             else: 
             # regression accuracy
-                MAE = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
+                MAE = torch.abs(pred.detach().numpy() - y_full.flatten()).mean().detach().numpy()
                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE, '\n')
             # print()
             # print("pred: ", pred.detach().numpy()[:5])
