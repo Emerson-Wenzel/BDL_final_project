@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
+from mpl_toolkits.mplot3d import Axes3D  
 
 
 def gauss_logpdf(x, mu, s):
@@ -323,15 +324,30 @@ class BNNBayesbyBackprop(nn.Module):
 
             print("full weights: \n", self.model.l1.W_mu_DO.detach().numpy())
             b1 = self.model.l1.b_mu_O.detach().numpy()[0]
-            w1 = self.model.l1.W_mu_DO.detach().numpy()[0][0]
-            x1 = np.random.uniform(-8, 8, (2,100))
-            y1 = x1 * w1 + b1
+            w1 = self.model.l1.W_mu_DO.detach().numpy()[0]
+            x1 = np.random.uniform(-8, 8, (100,2))
+            w1 = w1.reshape((-1, 1))
+            print(w1.shape)
+            y1 = x1 @ w1 + b1
+            
             X_batch_np = X_batch.detach().numpy() 
             y_batch_np = y_batch.detach().numpy()
             plt.scatter(X_batch_np[y_batch_np == 0, 0], X_batch_np[y_batch_np == 0, 1], c='red', alpha=.2)
             plt.scatter(X_batch_np[y_batch_np == 1, 0], X_batch_np[y_batch_np == 1, 1], c='blue', alpha=.2)
-            plt.plot(x1, y1)
             plt.show()
+            fig = plt.figure(figsize=(20,20))
+            ax = fig.add_subplot(311, projection='3d')
+            print("------")
+            print(x1[:,0].shape)
+            print(x1[:,1].shape)
+            print(y1.shape)
+            print("------")
+            ax.scatter(x1[0,1], x1[:,1], y1)
+            ax.set_xlabel('X_train[:,0]')
+            ax.set_ylabel('X_train[:,1]')
+            ax.set_zlabel('output[:,1] (Standard Deviation)')
+            fig.show()
+
             output = self.model(X_batch)
 
             X_full = torch.Tensor(X)
