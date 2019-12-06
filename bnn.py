@@ -18,6 +18,7 @@ class BNNLayer(nn.Module):
         self.prior_mu = prior_mu
         self.prior_s = prior_s
         self.usedWeights = None
+        self.usedBias = None
 
         # Means of weights, shape input by output
         # self.W_mu_DO = nn.Parameter(torch.Tensor(input_dim, output_dim).normal_(prior_mu, prior_s))
@@ -34,7 +35,7 @@ class BNNLayer(nn.Module):
         if preset != False:
             W_mu, b_mu = preset['W_mu'], preset['b_mu']
             self.W_mu_DO = nn.Parameter(torch.Tensor(W_mu))
-            self.W_log_s_DO = nn.Parameter(torch.Tensor([-1.4, -1.4]))
+            self.W_log_s_DO = nn.Parameter(torch.Tensor([-3, -3]))
             self.b_mu_O = nn.Parameter(torch.Tensor(b_mu))
             self.b_log_s_O = nn.Parameter(torch.Tensor([-3, -3]))
 
@@ -67,8 +68,9 @@ class BNNLayer(nn.Module):
         if predict:
             # print("W_mu_DO shape: ", self.W_mu_DO.shape)
             (W_DO, b_O) = self.W_b_by_reparam()
-            print("W_DO", W_DO)
             # print("X_ND[1]", X_ND[1])
+            self.usedWeights = W_DO
+            self.usedBias = b_O
             pred = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
             return pred
 
@@ -187,6 +189,7 @@ class BNNBayesbyBackprop(nn.Module):
         self.prior_s = prior_s
         self.num_MC_samples = num_MC_samples
         self.classification = classification
+        self.mean_likelihood = None 
 
         # self.model = BNN(38, self.prior_mu, self.prior_s)
         self.model = BNN(2, self.prior_mu, self.prior_s, linear_regression, preset, classification)
@@ -228,6 +231,7 @@ class BNNBayesbyBackprop(nn.Module):
           print("mean log prior ", aggregate_log_prior.detach().numpy() / self.num_MC_samples)
           print("mean log post est ", aggregate_log_post_est.detach().numpy() / self.num_MC_samples)
           print("mean likelihood est ", aggregate_log_likeli.detach().numpy() / self.num_MC_samples)
+          self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
           # print("mean log s N est ", 1e6 * aggregate_log_s_N.detach().numpy() / self.num_MC_samples)
           # print("elbo ", (aggregate_log_prior - aggregate_log_post_est) / self.num_MC_samples)
           # return -1 * (aggregate_log_prior - aggregate_log_post_est) / self.num_MC_samples
@@ -314,39 +318,40 @@ class BNNBayesbyBackprop(nn.Module):
             print("change in w1: ", self.model.l1.W_mu_DO.detach().numpy()[:,0].flatten() - old_weights1,
                    "\ncur w1: ", self.model.l1.W_mu_DO.detach().numpy()[:,0].flatten(),
                    "\nold w1: ", old_weights1)
-            print("change in w2: ", self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten() - old_weights2,
-                   "\ncur w2: ", self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten(),
-                   "\nold w2: ", old_weights2)
+            # std weights
+#             print("change in w2: ", self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten() - old_weights2,
+#                    "\ncur w2: ", self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten(),
+#                    "\nold w2: ", old_weights2)
             
             print("change in b: ", self.model.l1.b_mu_O.detach().numpy().flatten() - old_bias,
                   "\ncur b: ", self.model.l1.b_mu_O.detach().numpy().flatten(),
                   "\nold b: ", old_bias)
 
-            print("full weights: \n", self.model.l1.W_mu_DO.detach().numpy())
-            b1 = self.model.l1.b_mu_O.detach().numpy()[0]
-            w1 = self.model.l1.W_mu_DO.detach().numpy()[0]
-            x1 = np.random.uniform(-8, 8, (100,2))
-            w1 = w1.reshape((-1, 1))
-            print(w1.shape)
-            y1 = x1 @ w1 + b1
+#             print("full weights: \n", self.model.l1.W_mu_DO.detach().numpy())
+#             b1 = self.model.l1.b_mu_O.detach().numpy()[0]
+#             w1 = self.model.l1.W_mu_DO.detach().numpy()[0]
+#             x1 = np.random.uniform(-8, 8, (100,2))
+#             w1 = w1.reshape((-1, 1))
+#             print(w1.shape)
+#             y1 = x1 @ w1 + b1
             
             X_batch_np = X_batch.detach().numpy() 
             y_batch_np = y_batch.detach().numpy()
-            plt.scatter(X_batch_np[y_batch_np == 0, 0], X_batch_np[y_batch_np == 0, 1], c='red', alpha=.2)
-            plt.scatter(X_batch_np[y_batch_np == 1, 0], X_batch_np[y_batch_np == 1, 1], c='blue', alpha=.2)
-            plt.show()
-            fig = plt.figure(figsize=(20,20))
-            ax = fig.add_subplot(311, projection='3d')
-            print("------")
-            print(x1[:,0].shape)
-            print(x1[:,1].shape)
-            print(y1.shape)
-            print("------")
-            ax.scatter(x1[0,1], x1[:,1], y1)
-            ax.set_xlabel('X_train[:,0]')
-            ax.set_ylabel('X_train[:,1]')
-            ax.set_zlabel('output[:,1] (Standard Deviation)')
-            fig.show()
+#             plt.scatter(X_batch_np[y_batch_np == 0, 0], X_batch_np[y_batch_np == 0, 1], c='red', alpha=.2)
+#             plt.scatter(X_batch_np[y_batch_np == 1, 0], X_batch_np[y_batch_np == 1, 1], c='blue', alpha=.2)
+#             plt.show()
+#             fig = plt.figure(figsize=(20,20))
+#             ax = fig.add_subplot(311, projection='3d')
+#             print("------")
+#             print(x1[:,0].shape)
+#             print(x1[:,1].shape)
+#             print(y1.shape)
+#             print("------")
+#             ax.scatter(x1[0,1], x1[:,1], y1)
+#             ax.set_xlabel('X_train[:,0]')
+#             ax.set_ylabel('X_train[:,1]')
+#             ax.set_zlabel('output[:,1] (Standard Deviation)')
+#             fig.show()
 
             output = self.model(X_batch)
 
@@ -356,12 +361,17 @@ class BNNBayesbyBackprop(nn.Module):
 
 
             pred = self.model(X_full, predict=True)
+            print('used weights1: ',self.model.l1.usedWeights[:,0].detach().numpy())
+            print('used bias1: ', self.model.l1.usedBias[0].detach().numpy())
+ 
             pred2 = self.model(X_full, predict=True)
+            print('used weights2: ',self.model.l1.usedWeights[:,0].detach().numpy())
+            print('used bias2: ', self.model.l1.usedBias[0].detach().numpy())
             differences = (pred.detach().numpy() == pred2.detach().numpy()).astype(int).sum() / pred.shape[0]
 
-            print("differences between samples: {}".format(differences))
-            print("standard deviation: {}".format(torch.exp(self.model.l1.W_log_s_DO)))
-            print("bias std:           {}".format(torch.exp(self.model.l1.b_log_s_O)))
+            print("differences between preds: {}".format(differences))
+            print("standard deviation: {}".format(torch.exp(self.model.l1.W_log_s_DO)[:,0].detach().numpy()))
+            print("bias std:           {}".format(torch.exp(self.model.l1.b_log_s_O)[0].detach().numpy()))
             #pred = self.model(X_full, predict=True)
             cur_epoch_loss = np.array(batch_losses).sum()
 
