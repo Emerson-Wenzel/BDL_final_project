@@ -16,6 +16,7 @@ class BNNLayer(nn.Module):
         self.output_dim = output_dim
         self.prior_mu = prior_mu
         self.prior_s = prior_s
+        self.usedWeights = None
 
         # Means of weights, shape input by output
         # self.W_mu_DO = nn.Parameter(torch.Tensor(input_dim, output_dim).normal_(prior_mu, prior_s))
@@ -32,7 +33,7 @@ class BNNLayer(nn.Module):
         if preset != False:
             W_mu, b_mu = preset['W_mu'], preset['b_mu']
             self.W_mu_DO = nn.Parameter(torch.Tensor(W_mu))
-            self.W_log_s_DO = nn.Parameter(torch.Tensor([-3, -3]))
+            self.W_log_s_DO = nn.Parameter(torch.Tensor([-1.4, -1.4]))
             self.b_mu_O = nn.Parameter(torch.Tensor(b_mu))
             self.b_log_s_O = nn.Parameter(torch.Tensor([-3, -3]))
 
@@ -65,7 +66,7 @@ class BNNLayer(nn.Module):
         if predict:
             # print("W_mu_DO shape: ", self.W_mu_DO.shape)
             (W_DO, b_O) = self.W_b_by_reparam()
-            # print("W_DO", W_DO)
+            print("W_DO", W_DO)
             # print("X_ND[1]", X_ND[1])
             pred = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
             return pred
@@ -333,20 +334,23 @@ class BNNBayesbyBackprop(nn.Module):
             plt.show()
             output = self.model(X_batch)
 
-
-#             actual_y_means = torch.mm(X_batch, torch.tensor(W).float()) + torch.tensor(b) # torch.mm(X_batch, torch.tensor(np.array([1, 0.2]).reshape(-1, 1)).float()) + torch.tensor(-5)
-
             X_full = torch.Tensor(X)
             y_full = torch.Tensor(y)
 
 
+
             pred = self.model(X_full, predict=True)
+            pred2 = self.model(X_full, predict=True)
+            differences = (pred.detach().numpy() == pred2.detach().numpy()).astype(int).sum() / pred.shape[0]
+
+            print("differences between samples: {}".format(differences))
+            print("standard deviation: {}".format(torch.exp(self.model.l1.W_log_s_DO)))
+            print("bias std:           {}".format(torch.exp(self.model.l1.b_log_s_O)))
+            #pred = self.model(X_full, predict=True)
             cur_epoch_loss = np.array(batch_losses).sum()
 
             # classification accuracy
             if self.classification:
-                print(pred.shape)
-                print(y_full.shape)
                 acc = (pred.detach().numpy() == y_full.numpy()).astype(int).sum() / y_full.shape[0]
                 print("real: ", y_full.numpy().flatten()[:7])
                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\n')
@@ -362,3 +366,6 @@ class BNNBayesbyBackprop(nn.Module):
 
         if plot:
             plt.plot([i for i in range(n_epochs)], loss_by_epoch)
+
+
+
