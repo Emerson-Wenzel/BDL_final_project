@@ -36,9 +36,10 @@ class BNNLayer(nn.Module):
         if preset != False:
             W_mu, b_mu = preset['W_mu'], preset['b_mu']
             self.W_mu_DO = nn.Parameter(torch.Tensor(W_mu))
-            self.W_log_s_DO = nn.Parameter(torch.Tensor([-3, -3]))
+            self.W_log_s_DO = nn.Parameter(torch.Tensor([[-3, -3],
+                                                         [-3, -3]]))
             self.b_mu_O = nn.Parameter(torch.Tensor(b_mu))
-            self.b_log_s_O = nn.Parameter(torch.Tensor([-3, -3]))
+            self.b_log_s_O = nn.Parameter(torch.Tensor([-1, -1]))
 
         self.log_prior = 0
         self.log_post_est = 0
@@ -72,7 +73,8 @@ class BNNLayer(nn.Module):
             # print("X_ND[1]", X_ND[1])
             self.usedWeights = W_DO
             self.usedBias = b_O
-            pred = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
+#             pred = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
+            pred = torch.mm(X_ND, W_DO) + b_O
             return pred
 
         (W_DO, b_O) = self.W_b_by_reparam()
@@ -97,7 +99,7 @@ class BNNLayer(nn.Module):
             self.log_post_ests = torch.cat(log_post_ests, dim=0)            
 
         elif num_preds == 1:
-            output = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
+            output = torch.mm(X_ND, W_DO) + b_O
             # print("output shape: ", output.shape)
             self.log_prior = (gauss_logpdf(W_DO, self.prior_mu, self.prior_s).sum() + 
                               gauss_logpdf(b_O, self.prior_mu, self.prior_s).sum()) 
@@ -191,6 +193,8 @@ class BNNBayesbyBackprop(nn.Module):
         self.num_MC_samples = num_MC_samples
         self.classification = classification
         self.mean_likelihood = None 
+        self.elbo = None 
+        self.gradB = None
 
         # self.model = BNN(38, self.prior_mu, self.prior_s)
         self.model = BNN(2, self.prior_mu, self.prior_s, linear_regression, preset, classification)
@@ -201,6 +205,8 @@ class BNNBayesbyBackprop(nn.Module):
 
     # @TODO: Does this scale with "batch size" or "traning set size" or what?
     def MC_elbo(self, X_ND, y_N, curr_batch, n_batches, epoch):
+        self.model.zero_grad()
+
         # out[0] is the predicted mean, out[1] is the predicted std_dev
         aggregate_log_prior, aggregate_log_post_est, aggregate_log_likeli, aggregate_log_s_N = 0.0, 0.0, 0.0, 0.0
         for i in range(self.num_MC_samples):
@@ -233,6 +239,13 @@ class BNNBayesbyBackprop(nn.Module):
           print("mean log post est ", aggregate_log_post_est.detach().numpy() / self.num_MC_samples)
           print("mean likelihood est ", aggregate_log_likeli.detach().numpy() / self.num_MC_samples)
           self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
+          self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
+          self.elbo.backward()
+          print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
+          self.gradB = self.model.l1.b_mu_O.grad[0] 
+          print("grad b ", self.gradB)
+
+
           # print("mean log s N est ", 1e6 * aggregate_log_s_N.detach().numpy() / self.num_MC_samples)
           # print("elbo ", (aggregate_log_prior - aggregate_log_post_est) / self.num_MC_samples)
           # return -1 * (aggregate_log_prior - aggregate_log_post_est) / self.num_MC_samples
@@ -245,13 +258,18 @@ class BNNBayesbyBackprop(nn.Module):
         if self.classification:
             # s_NxMC is NxMC where each row holds MC samples, s ~ N(mu(X_n), log_s(X_n))
             # where mu(X_n) and log_s(X_n) are the BNN's predicted values for nth instances
-            s_NxMC = torch.empty(size=(y_N.shape[0], MC_samples), requires_grad=False)
+#             s_NxMC = torch.empty(size=(y_N.shape[0], MC_samples), requires_grad=True)
+            s_N_list = []
             for i in range(MC_samples): 
 #                 s_NxMC[:,i] = torch.normal(nn_output_mu_N,
 #                                           torch.exp(nn_output_log_s_N))
-                s_NxMC[:,i] = torch.normal(nn_output_mu_N,
+                s_N = torch.empty(size=(y_N.shape[0]), requires_grad=True)
+                s_N = torch.normal(nn_output_mu_N,
                                           0.1)
+                s_N_list.append(s_N)
 
+            s_NxMC = torch.stach(s_N_list, dim=0)
+            print('s_NxMC shape:', s_NxMC.detach().numpy().shape)
             if self.last_batch == True: 
 #                 print("continuous_pred: ", nn_output_mu_N.detach().numpy()[:5])
                 pass
@@ -335,8 +353,8 @@ class BNNBayesbyBackprop(nn.Module):
             logger = open(loggingFileName, "a")
             logger.write(strToWrite + '\n')
             logger.close()
-        
-#            logger.write(strToWrite)
+
+#             print("full weights: \n", self.model.l1.W_mu_DO.detach().numpy())
 #             b1 = self.model.l1.b_mu_O.detach().numpy()[0]
 #             w1 = self.model.l1.W_mu_DO.detach().numpy()[0]
 #             x1 = np.random.uniform(-8, 8, (100,2))
@@ -391,7 +409,7 @@ class BNNBayesbyBackprop(nn.Module):
                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\n')
             else: 
             # regression accuracy
-                MAE = torch.abs(pred.detach().numpy() - y_full.flatten()).mean().detach().numpy()
+                MAE = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE, '\n')
             # print()
             # print("pred: ", pred.detach().numpy()[:5])
