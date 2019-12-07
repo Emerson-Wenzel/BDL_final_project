@@ -211,7 +211,7 @@ class BNNBayesbyBackprop(nn.Module):
 
     # @TODO: Does this scale with "batch size" or "traning set size" or what?
     def MC_elbo(self, X_ND, y_N, curr_batch, n_batches, epoch):
-#         self.model.zero_grad()        
+#        self.model.zero_grad()        
         # out[0] is the predicted mean, out[1] is the predicted std_dev
         aggregate_log_prior, aggregate_log_post_est, aggregate_log_likeli, aggregate_log_s_N = 0.0, 0.0, 0.0, 0.0
         for i in range(self.num_MC_samples):
@@ -265,8 +265,8 @@ class BNNBayesbyBackprop(nn.Module):
             s_N_list = []
             for i in range(MC_samples): 
                 e = torch.Tensor(size=(y_N.shape)).normal_(0, 1.0)
-                s_N = nn_output_mu_N + e * 0.1
-                #s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
+                #s_N = nn_output_mu_N + e * 0.1
+                s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
                 s_N_list.append(s_N)
 
             s_NxMC = torch.stack(s_N_list, dim=1)
@@ -395,12 +395,11 @@ class BNNBayesbyBackprop(nn.Module):
             # classification accuracy
             if self.classification:
                 acc = (pred.detach().numpy() == y_full.numpy()).astype(int).sum() / y_full.shape[0]
-                print("real: ", y_full.numpy().flatten()[:7])
-                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\n')
+                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc)
             else: 
             # regression accuracy
                 MAE = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
-                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE, '\n')
+                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE)
             # print()
             # print("pred: ", pred.detach().numpy()[:5])
             # print("real: ", y_full.numpy().reshape(-1)[:5])

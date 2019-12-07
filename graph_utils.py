@@ -23,13 +23,20 @@ longColName = {
 
 
 
-def graphCols(df, cols=[''], ylabel, plotDim1, plotDim2):
+def graphCols(df, cols, ylabel, plotDim1, plotDim2):
     X = list(range(df.shape[0]))
 
-    fig, axs = plt.subplots(plotDim1, plotDim2)
+    #fig, axs = plt.subplots(plotDim1, plotDim2)
 
 
     for i, c in enumerate(cols):
+    
+        plt.plot(X, df[c])
+        plt.title(longColName[c])
+        plt.show()
+        
+    
+    """
         row = i // plotDim2
         col = i % plotDim2
         axs[row, col].plot(X, df[c])
@@ -39,4 +46,4 @@ def graphCols(df, cols=[''], ylabel, plotDim1, plotDim2):
 
     plt.show()
 
-
+"""
