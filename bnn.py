@@ -8,6 +8,9 @@ from mpl_toolkits.mplot3d import Axes3D
 
 def gauss_logpdf(x, mu, s):
     normalized_x = (x - mu) / s
+    if (normalized_x.detach().numpy() >= float('inf')).any():
+        print('\n\n\n\n\n\n\n\n\n\n\\n\n')
+        print('exploded')
     logprob = (-1 * (normalized_x ** 2) / 2) - 0.5 * np.log(2 * np.pi)
     return logprob
 
@@ -50,6 +53,7 @@ class BNNLayer(nn.Module):
         rand_norm_DO = torch.Tensor(self.input_dim, self.output_dim).normal_(0, 1)
         rand_norm_O = torch.Tensor(self.output_dim).normal_(0, 1)
         W_DO = self.W_mu_DO + rand_norm_DO * torch.exp(self.W_log_s_DO)
+        print('W_log_s_DO:',self.W_log_s_DO.detach().numpy())
         b_O = self.b_mu_O + rand_norm_O * torch.exp(self.b_log_s_O)
         return (W_DO, b_O)
 
@@ -101,8 +105,11 @@ class BNNLayer(nn.Module):
         elif num_preds == 1:
             output = torch.mm(X_ND, W_DO) + b_O
             # print("output shape: ", output.shape)
+            print('W: ', W_DO, 'b:', b_O)
             self.log_prior = (gauss_logpdf(W_DO, self.prior_mu, self.prior_s).sum() + 
                               gauss_logpdf(b_O, self.prior_mu, self.prior_s).sum()) 
+
+            print('log_prior', self.log_prior)
 
             self.log_post_est = (gauss_logpdf(W_DO, self.W_mu_DO, torch.exp(self.W_log_s_DO)).sum() +
                                  gauss_logpdf(b_O, self.b_mu_O, torch.exp(self.b_log_s_O)).sum())
@@ -205,7 +212,7 @@ class BNNBayesbyBackprop(nn.Module):
 
     # @TODO: Does this scale with "batch size" or "traning set size" or what?
     def MC_elbo(self, X_ND, y_N, curr_batch, n_batches, epoch):
-        self.model.zero_grad()
+#         self.model.zero_grad()
 
         # out[0] is the predicted mean, out[1] is the predicted std_dev
         aggregate_log_prior, aggregate_log_post_est, aggregate_log_likeli, aggregate_log_s_N = 0.0, 0.0, 0.0, 0.0
@@ -239,16 +246,12 @@ class BNNBayesbyBackprop(nn.Module):
           print("mean log post est ", aggregate_log_post_est.detach().numpy() / self.num_MC_samples)
           print("mean likelihood est ", aggregate_log_likeli.detach().numpy() / self.num_MC_samples)
           self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
-          self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
-          self.elbo.backward()
-          print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
-          self.gradB = self.model.l1.b_mu_O.grad[0] 
-          print("grad b ", self.gradB)
+#           self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
+#           self.elbo.backward()
+#           print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
+#           self.gradB = self.model.l1.b_mu_O.grad[0] 
+#           print("grad b ", self.gradB)
 
-
-          # print("mean log s N est ", 1e6 * aggregate_log_s_N.detach().numpy() / self.num_MC_samples)
-          # print("elbo ", (aggregate_log_prior - aggregate_log_post_est) / self.num_MC_samples)
-          # return -1 * (aggregate_log_prior - aggregate_log_post_est) / self.num_MC_samples
         return (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples) #+ 1e6 * torch.exp(aggregate_log_s_N) / self.num_MC_samples
 
     # @TODO: is it gauss_logpdf(y, sigmoid(pred_y), exp(nn_ouput_log_s_N))? or is it: MC sample: sigmoid(sample from N(pred_y, exp(nn_ouput_log_s_N))), threshold at [0.5]?
@@ -258,18 +261,15 @@ class BNNBayesbyBackprop(nn.Module):
         if self.classification:
             # s_NxMC is NxMC where each row holds MC samples, s ~ N(mu(X_n), log_s(X_n))
             # where mu(X_n) and log_s(X_n) are the BNN's predicted values for nth instances
-#             s_NxMC = torch.empty(size=(y_N.shape[0], MC_samples), requires_grad=True)
             s_N_list = []
             for i in range(MC_samples): 
-#                 s_NxMC[:,i] = torch.normal(nn_output_mu_N,
-#                                           torch.exp(nn_output_log_s_N))
-                s_N = torch.empty(size=(y_N.shape[0]), requires_grad=True)
-                s_N = torch.normal(nn_output_mu_N,
-                                          0.1)
+                e = torch.Tensor(size=(y_N.shape)).normal_(0, 0.1)
+#                 s_N = nn_output_mu_N + e * 0.1
+                s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
                 s_N_list.append(s_N)
 
-            s_NxMC = torch.stach(s_N_list, dim=0)
-            print('s_NxMC shape:', s_NxMC.detach().numpy().shape)
+            s_NxMC = torch.stack(s_N_list, dim=1)
+#             print('s_NxMC shape:', s_NxMC.detach().numpy().shape)
             if self.last_batch == True: 
 #                 print("continuous_pred: ", nn_output_mu_N.detach().numpy()[:5])
                 pass
