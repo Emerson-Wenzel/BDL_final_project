@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 from mpl_toolkits.mplot3d import Axes3D  
 
 
@@ -299,6 +300,12 @@ class BNNBayesbyBackprop(nn.Module):
         return log_likelihood
 
     def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False):
+        loggingFileName = str(int(time.time())) + ".csv"
+        print("Data being saved in following file:\n{}".format(loggingFileName))
+        logger = open(loggingFileName, "w")
+        logger.write("w1_1,w1_2,w2_1,w2_2,w1_1_grad,w1_2_grad,w2_1_grad,w2_2_grad,b_1,b_2,b_1_grad,b_2_grad\n")
+        logger.close()
+        
         n_batches = int(np.ceil(X.shape[0] / batch_size))
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
 
@@ -313,7 +320,6 @@ class BNNBayesbyBackprop(nn.Module):
                     self.last_batch = True
                 else:
                     self.last_batch = False
-                # print("batch: ", b, " / ", n_batches)
                 batch_start_i = batch_size * batch_num
                 if (batch_size * (batch_num + 1)) < X.shape[0]:
                     batch_end_i = batch_size * (batch_num + 1)
@@ -332,19 +338,21 @@ class BNNBayesbyBackprop(nn.Module):
                 batch_losses.append(loss.detach().numpy())
                 loss.backward()
                 optimizer.step()
-            print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
-            print("grad b ", self.model.l1.b_mu_O.grad[0])
-            print("change in w1: ", self.model.l1.W_mu_DO.detach().numpy()[:,0].flatten() - old_weights1,
-                   "\ncur w1: ", self.model.l1.W_mu_DO.detach().numpy()[:,0].flatten(),
-                   "\nold w1: ", old_weights1)
-            # std weights
-#             print("change in w2: ", self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten() - old_weights2,
-#                    "\ncur w2: ", self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten(),
-#                    "\nold w2: ", old_weights2)
-            
-            print("change in b: ", self.model.l1.b_mu_O.detach().numpy().flatten() - old_bias,
-                  "\ncur b: ", self.model.l1.b_mu_O.detach().numpy().flatten(),
-                  "\nold b: ", old_bias)
+            toWrite = [
+                        self.model.l1.W_mu_DO.detach().numpy().flatten(),
+                        #self.model.l1.W_log_s_DO.detach().numpy().flatten(),
+                        self.model.l1.W_mu_DO.grad.numpy().flatten(),
+                        self.model.l1.b_mu_O.detach().numpy().flatten(),
+#                        self.model.l1.b_log_s_O.detach().numpy().flatten(),
+                        self.model.l1.b_mu_O.grad.numpy().flatten()
+            ]
+            toWrite = [item for sublist in toWrite for item in sublist]
+            # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad
+            strToWrite = ','.join(map(str, toWrite))
+            print(strToWrite)
+            logger = open(loggingFileName, "a")
+            logger.write(strToWrite + '\n')
+            logger.close()
 
 #             print("full weights: \n", self.model.l1.W_mu_DO.detach().numpy())
 #             b1 = self.model.l1.b_mu_O.detach().numpy()[0]
@@ -380,17 +388,17 @@ class BNNBayesbyBackprop(nn.Module):
 
 
             pred = self.model(X_full, predict=True)
-            print('used weights1: ',self.model.l1.usedWeights[:,0].detach().numpy())
-            print('used bias1: ', self.model.l1.usedBias[0].detach().numpy())
+#            print('used weights1: ',self.model.l1.usedWeights[:,0].detach().numpy())
+#            print('used bias1: ', self.model.l1.usedBias[0].detach().numpy())
  
-            pred2 = self.model(X_full, predict=True)
-            print('used weights2: ',self.model.l1.usedWeights[:,0].detach().numpy())
-            print('used bias2: ', self.model.l1.usedBias[0].detach().numpy())
-            differences = (pred.detach().numpy() == pred2.detach().numpy()).astype(int).sum() / pred.shape[0]
+#            pred2 = self.model(X_full, predict=True)
+#            print('used weights2: ',self.model.l1.usedWeights[:,0].detach().numpy())
+#            print('used bias2: ', self.model.l1.usedBias[0].detach().numpy())
+#            differences = (pred.detach().numpy() == pred2.detach().numpy()).astype(int).sum() / pred.shape[0]
 
-            print("differences between preds: {}".format(differences))
-            print("standard deviation: {}".format(torch.exp(self.model.l1.W_log_s_DO)[:,0].detach().numpy()))
-            print("bias std:           {}".format(torch.exp(self.model.l1.b_log_s_O)[0].detach().numpy()))
+#            print("differences between preds: {}".format(differences))
+#            print("standard deviation: {}".format(torch.exp(self.model.l1.W_log_s_DO)[:,0].detach().numpy()))
+#            print("bias std:           {}".format(torch.exp(self.model.l1.b_log_s_O)[0].detach().numpy()))
             #pred = self.model(X_full, predict=True)
             cur_epoch_loss = np.array(batch_losses).sum()
 
@@ -408,7 +416,7 @@ class BNNBayesbyBackprop(nn.Module):
             # print("real: ", y_full.numpy().reshape(-1)[:5])
             loss_by_epoch.append(cur_epoch_loss)
             # e += 1
-
+        
         if plot:
             plt.plot([i for i in range(n_epochs)], loss_by_epoch)
 
