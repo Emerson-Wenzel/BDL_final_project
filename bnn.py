@@ -53,7 +53,7 @@ class BNNLayer(nn.Module):
         rand_norm_DO = torch.Tensor(self.input_dim, self.output_dim).normal_(0, 1)
         rand_norm_O = torch.Tensor(self.output_dim).normal_(0, 1)
         W_DO = self.W_mu_DO + rand_norm_DO * torch.exp(self.W_log_s_DO)
-        print('W_log_s_DO:',self.W_log_s_DO.detach().numpy())
+#         print('W_log_s_DO:',self.W_log_s_DO.detach().numpy())
         b_O = self.b_mu_O + rand_norm_O * torch.exp(self.b_log_s_O)
         return (W_DO, b_O)
 
@@ -105,11 +105,11 @@ class BNNLayer(nn.Module):
         elif num_preds == 1:
             output = torch.mm(X_ND, W_DO) + b_O
             # print("output shape: ", output.shape)
-            print('W: ', W_DO, 'b:', b_O)
+#             print('W: ', W_DO, 'b:', b_O)
             self.log_prior = (gauss_logpdf(W_DO, self.prior_mu, self.prior_s).sum() + 
                               gauss_logpdf(b_O, self.prior_mu, self.prior_s).sum()) 
 
-            print('log_prior', self.log_prior)
+#             print('log_prior', self.log_prior)
 
             self.log_post_est = (gauss_logpdf(W_DO, self.W_mu_DO, torch.exp(self.W_log_s_DO)).sum() +
                                  gauss_logpdf(b_O, self.b_mu_O, torch.exp(self.b_log_s_O)).sum())
@@ -119,7 +119,7 @@ class BNNLayer(nn.Module):
 
 
 class BNN(nn.Module):
-    def __init__(self, input_dim, prior_mu=0, prior_s=0.01, linear_regression=False, preset=False, classification=False):
+    def __init__(self, input_dim, prior_mu=0, prior_s=0.01, linear_model=False, preset=False, classification=False):
           super().__init__() 
           self.input_dim = input_dim
           self.hidden_1_dim = 5
@@ -128,10 +128,10 @@ class BNN(nn.Module):
           self.prior_mu = prior_mu
           self.prior_s = prior_s
 
-          self.linear_regression = linear_regression
+          self.linear_model = linear_model
           self.classification = classification
 
-          if not linear_regression:
+          if not linear_model:
               self.l1 = BNNLayer(self.input_dim, self.hidden_1_dim, self.prior_mu, self.prior_s)
               self.activ_1_2 = nn.LeakyReLU()
               self.l2 = BNNLayer(self.hidden_1_dim, self.hidden_2_dim, self.prior_mu, self.prior_s)
@@ -146,7 +146,7 @@ class BNN(nn.Module):
 
 
     def forward(self, X_ND, predict=False, num_preds=1):
-          if not self.linear_regression:
+          if not self.linear_model:
               output = self.activ_1_2(self.l1(X_ND, predict, num_preds))
               output = self.activ_2_3(self.l2(output, predict, num_preds))
               output = self.l3(output, predict, num_preds)
@@ -173,7 +173,7 @@ class BNN(nn.Module):
           return output
 
     def calc_total_log_prior_log_post_est(self):
-          if not self.linear_regression:
+          if not self.linear_model:
             total_log_prior = self.l1.log_prior + self.l2.log_prior + self.l3.log_prior
             total_log_post_est = self.l1.log_post_est + self.l2.log_post_est + self.l3.log_post_est
             return total_log_prior, total_log_post_est
@@ -186,7 +186,7 @@ class BNN(nn.Module):
 class BNNBayesbyBackprop(nn.Module):
     # Preset argument for use with debugging. For linear regression, if preset, pass dictionary of form {'W_mu': '', 'b_mu': ''}
     # where W_mu and b_mu will be used as means for the q distribution. 
-    def __init__(self, nn_dims=None, prior_mu=10, prior_s=0.05, num_MC_samples=100, linear_regression=False, preset=False, classification=False):
+    def __init__(self, nn_dims=None, prior_mu=10, prior_s=0.05, num_MC_samples=100, linear_model=False, preset=False, classification=False):
         '''
         nn_dims : list of layer sizes from input to output layer (of form: [input_dim, hidden_layer_1_dim, ..., output_dim])
           Note: optim taking in model.parameters has to have them specified as individual self.linear1, self.linear2 attributes,
@@ -204,7 +204,7 @@ class BNNBayesbyBackprop(nn.Module):
         self.gradB = None
 
         # self.model = BNN(38, self.prior_mu, self.prior_s)
-        self.model = BNN(2, self.prior_mu, self.prior_s, linear_regression, preset, classification)
+        self.model = BNN(2, self.prior_mu, self.prior_s, linear_model, preset, classification)
 
 #         for debugging
         self.last_batch = False
@@ -245,7 +245,7 @@ class BNNBayesbyBackprop(nn.Module):
           print("mean log prior ", aggregate_log_prior.detach().numpy() / self.num_MC_samples)
           print("mean log post est ", aggregate_log_post_est.detach().numpy() / self.num_MC_samples)
           print("mean likelihood est ", aggregate_log_likeli.detach().numpy() / self.num_MC_samples)
-          self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
+#           self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
 #           self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
 #           self.elbo.backward()
 #           print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
@@ -263,9 +263,9 @@ class BNNBayesbyBackprop(nn.Module):
             # where mu(X_n) and log_s(X_n) are the BNN's predicted values for nth instances
             s_N_list = []
             for i in range(MC_samples): 
-                e = torch.Tensor(size=(y_N.shape)).normal_(0, 0.1)
-#                 s_N = nn_output_mu_N + e * 0.1
-                s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
+                e = torch.Tensor(size=(y_N.shape)).normal_(0, 1)
+                s_N = nn_output_mu_N + e * 0.1
+#                 s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
                 s_N_list.append(s_N)
 
             s_NxMC = torch.stack(s_N_list, dim=1)
@@ -337,6 +337,8 @@ class BNNBayesbyBackprop(nn.Module):
                 old_bias = self.model.l1.b_mu_O.detach().numpy().flatten()
                 batch_losses.append(loss.detach().numpy())
                 loss.backward()
+#                 print(self.model.l1.W_mu_DO.grad.numpy().flatten()) 
+#                 print(self.model.l1.b_mu_O.grad.numpy().flatten()) 
                 optimizer.step()
             toWrite = [
                         self.model.l1.W_mu_DO.detach().numpy().flatten(),
@@ -362,8 +364,8 @@ class BNNBayesbyBackprop(nn.Module):
 #             print(w1.shape)
 #             y1 = x1 @ w1 + b1
             
-            X_batch_np = X_batch.detach().numpy() 
-            y_batch_np = y_batch.detach().numpy()
+#             X_batch_np = X_batch.detach().numpy() 
+#             y_batch_np = y_batch.detach().numpy()
 #             plt.scatter(X_batch_np[y_batch_np == 0, 0], X_batch_np[y_batch_np == 0, 1], c='red', alpha=.2)
 #             plt.scatter(X_batch_np[y_batch_np == 1, 0], X_batch_np[y_batch_np == 1, 1], c='blue', alpha=.2)
 #             plt.show()
