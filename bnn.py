@@ -9,7 +9,7 @@ from mpl_toolkits.mplot3d import Axes3D
 def gauss_logpdf(x, mu, s):
     normalized_x = (x - mu) / s
     if (normalized_x.detach().numpy() >= float('inf')).any():
-        print('\n\n\n\n\n\n\n\n\n\n\\n\n')
+        print('\n\n\n\n\n\n\n\n\n\n\n\n')
         print('exploded')
     logprob = (-1 * (normalized_x ** 2) / 2) - 0.5 * np.log(2 * np.pi)
     return logprob
@@ -53,7 +53,6 @@ class BNNLayer(nn.Module):
         rand_norm_DO = torch.Tensor(self.input_dim, self.output_dim).normal_(0, 1)
         rand_norm_O = torch.Tensor(self.output_dim).normal_(0, 1)
         W_DO = self.W_mu_DO + rand_norm_DO * torch.exp(self.W_log_s_DO)
-        print('W_log_s_DO:',self.W_log_s_DO.detach().numpy())
         b_O = self.b_mu_O + rand_norm_O * torch.exp(self.b_log_s_O)
         return (W_DO, b_O)
 
@@ -105,11 +104,9 @@ class BNNLayer(nn.Module):
         elif num_preds == 1:
             output = torch.mm(X_ND, W_DO) + b_O
             # print("output shape: ", output.shape)
-            print('W: ', W_DO, 'b:', b_O)
             self.log_prior = (gauss_logpdf(W_DO, self.prior_mu, self.prior_s).sum() + 
                               gauss_logpdf(b_O, self.prior_mu, self.prior_s).sum()) 
 
-            print('log_prior', self.log_prior)
 
             self.log_post_est = (gauss_logpdf(W_DO, self.W_mu_DO, torch.exp(self.W_log_s_DO)).sum() +
                                  gauss_logpdf(b_O, self.b_mu_O, torch.exp(self.b_log_s_O)).sum())
@@ -199,7 +196,9 @@ class BNNBayesbyBackprop(nn.Module):
         self.prior_s = prior_s
         self.num_MC_samples = num_MC_samples
         self.classification = classification
-        self.mean_likelihood = None 
+        self.mean_likelihood = None
+        self.log_prior = None
+        self.log_posterior = None 
         self.elbo = None 
         self.gradB = None
 
@@ -212,8 +211,7 @@ class BNNBayesbyBackprop(nn.Module):
 
     # @TODO: Does this scale with "batch size" or "traning set size" or what?
     def MC_elbo(self, X_ND, y_N, curr_batch, n_batches, epoch):
-#         self.model.zero_grad()
-
+#         self.model.zero_grad()        
         # out[0] is the predicted mean, out[1] is the predicted std_dev
         aggregate_log_prior, aggregate_log_post_est, aggregate_log_likeli, aggregate_log_s_N = 0.0, 0.0, 0.0, 0.0
         for i in range(self.num_MC_samples):
@@ -240,12 +238,15 @@ class BNNBayesbyBackprop(nn.Module):
             aggregate_log_likeli += sample_log_likeli
             # aggregate_log_s_N += nn_output_log_s_N.mean()
 
-        if curr_batch == (n_batches - 1):
+        self.log_prior = aggregate_log_prior.detach().numpy() / self.num_MC_samples
+        self.log_posterior = aggregate_log_post_est.detach().numpy() / self.num_MC_samples
+        self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
+
+
+#        if curr_batch == (n_batches - 1):
           #We assume that it is a scalar representing the total log prior(w, b) across all samples
-          print("mean log prior ", aggregate_log_prior.detach().numpy() / self.num_MC_samples)
-          print("mean log post est ", aggregate_log_post_est.detach().numpy() / self.num_MC_samples)
-          print("mean likelihood est ", aggregate_log_likeli.detach().numpy() / self.num_MC_samples)
-          self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
+
+#          self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
 #           self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
 #           self.elbo.backward()
 #           print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
@@ -263,33 +264,21 @@ class BNNBayesbyBackprop(nn.Module):
             # where mu(X_n) and log_s(X_n) are the BNN's predicted values for nth instances
             s_N_list = []
             for i in range(MC_samples): 
-                e = torch.Tensor(size=(y_N.shape)).normal_(0, 0.1)
-#                 s_N = nn_output_mu_N + e * 0.1
-                s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
+                e = torch.Tensor(size=(y_N.shape)).normal_(0, 1.0)
+                s_N = nn_output_mu_N + e * 0.1
+                #s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
                 s_N_list.append(s_N)
 
             s_NxMC = torch.stack(s_N_list, dim=1)
-#             print('s_NxMC shape:', s_NxMC.detach().numpy().shape)
-            if self.last_batch == True: 
-#                 print("continuous_pred: ", nn_output_mu_N.detach().numpy()[:5])
-                pass
             sigmoid = nn.Sigmoid()
             probs_of_one_NxMC = sigmoid(s_NxMC)
             avg_prob_of_one_N = probs_of_one_NxMC.mean(dim=1)
 
-            # print("shapes match: ", avg_prob_of_one_NxMC.shape == y_N.shape)
-    
-#             print("nn_output_mu_N min: ", np.min(nn_output_mu_N.detach().numpy()))
-#             print("nn_output_mu_N max: ", np.max(nn_output_mu_N.detach().numpy()))
             likelihood_N = torch.empty(size=y_N.shape)
             likelihood_N[y_N == 0] = 1 - avg_prob_of_one_N[y_N == 0]
             likelihood_N[y_N == 1] = avg_prob_of_one_N[y_N == 1]
-#             print("likelihood_N min:", np.min(likelihood_N.detach().numpy()), "\tlikelihood_N max:", np.max(likelihood_N.detach().numpy()))
-#             print("likelihood_N prod: ", np.prod(likelihood_N.detach().numpy()))
-            log_likelihood_N = torch.log(likelihood_N)
+            log_likelihood_N = torch.log(likelihood_N + 1e-7)
             log_likelihood = log_likelihood_N.sum()
-            # print("prob of one: ", avg_prob_of_one_N[:5].detach().numpy())
-            # print("real ", y_N[:5].detach().numpy())
 
         else:
             stds = torch.exp(nn_output_log_s_N)#10 * torch.ones([y_N.shape[0]], dtype=torch.float64) #
@@ -300,10 +289,11 @@ class BNNBayesbyBackprop(nn.Module):
         return log_likelihood
 
     def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False):
-        loggingFileName = str(int(time.time())) + ".csv"
+        #loggingFileName = str(int(time.time())) + ".csv"
+        loggingFileName = "logging.csv"
         print("Data being saved in following file:\n{}".format(loggingFileName))
         logger = open(loggingFileName, "w")
-        logger.write("w1_1,w1_2,w2_1,w2_2,w1_1_grad,w1_2_grad,w2_1_grad,w2_2_grad,b_1,b_2,b_1_grad,b_2_grad\n")
+        logger.write("w1_1,w1_2,w2_1,w2_2,w1_1_grad,w1_2_grad,w2_1_grad,w2_2_grad,b_1,b_2,b_1_grad,b_2_grad,log_prior,log_posterior,mean_likelihood\n")
         logger.close()
         
         n_batches = int(np.ceil(X.shape[0] / batch_size))
@@ -329,31 +319,31 @@ class BNNBayesbyBackprop(nn.Module):
                 self.model.zero_grad()
                 X_batch = torch.Tensor(X[batch_start_i : batch_end_i])
                 y_batch = torch.Tensor(y[batch_start_i : batch_end_i])
-
-                
                 loss = self.MC_elbo(X_batch, y_batch, batch_num, n_batches, e)
-                old_weights1 = self.model.l1.W_mu_DO.detach().numpy()[:,0].flatten()
-                old_weights2 = self.model.l1.W_mu_DO.detach().numpy()[:,1].flatten()
                 old_bias = self.model.l1.b_mu_O.detach().numpy().flatten()
                 batch_losses.append(loss.detach().numpy())
                 loss.backward()
                 optimizer.step()
-            toWrite = [
-                        self.model.l1.W_mu_DO.detach().numpy().flatten(),
-                        #self.model.l1.W_log_s_DO.detach().numpy().flatten(),
-                        self.model.l1.W_mu_DO.grad.numpy().flatten(),
-                        self.model.l1.b_mu_O.detach().numpy().flatten(),
-#                        self.model.l1.b_log_s_O.detach().numpy().flatten(),
-                        self.model.l1.b_mu_O.grad.numpy().flatten()
-            ]
-            toWrite = [item for sublist in toWrite for item in sublist]
-            # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad
-            strToWrite = ','.join(map(str, toWrite))
-            print(strToWrite)
-            logger = open(loggingFileName, "a")
-            logger.write(strToWrite + '\n')
-            logger.close()
+                toWrite = [
+                            self.model.l1.W_mu_DO.detach().numpy().flatten(),
+                            #self.model.l1.W_log_s_DO.detach().numpy().flatten(),
+                            self.model.l1.W_mu_DO.grad.numpy().flatten(),
+                            self.model.l1.b_mu_O.detach().numpy().flatten(),
+    #                        self.model.l1.b_log_s_O.detach().numpy().flatten(),
+                            self.model.l1.b_mu_O.grad.numpy().flatten()
+                ]
+                toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood]
+                # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad, log_prior, log_posterior, mean_likelihood
+                strToWrite = ','.join(map(str, toWrite))
+                logger = open(loggingFileName, "a")
+                logger.write(strToWrite + '\n')
+                logger.close()
 
+##                if np.isnan(self.model.l1.W_mu_DO.detach().numpy()).any():
+#                    breakTime = True
+#                    break
+#            if breakTime == True:
+#                break
 #             print("full weights: \n", self.model.l1.W_mu_DO.detach().numpy())
 #             b1 = self.model.l1.b_mu_O.detach().numpy()[0]
 #             w1 = self.model.l1.W_mu_DO.detach().numpy()[0]
