@@ -262,13 +262,13 @@ class BNNBayesbyBackprop(nn.Module):
             for i in range(MC_samples): 
 #                 s_NxMC[:,i] = torch.normal(nn_output_mu_N,
 #                                           torch.exp(nn_output_log_s_N))
-                s_N = torch.empty(size=(y_N.shape[0]), requires_grad=True)
+                s_N = torch.empty(size=(y_N.shape), requires_grad=True)
                 s_N = torch.normal(nn_output_mu_N,
                                           0.1)
                 s_N_list.append(s_N)
 
-            s_NxMC = torch.stach(s_N_list, dim=0)
-            print('s_NxMC shape:', s_NxMC.detach().numpy().shape)
+            s_NxMC = torch.stack(s_N_list, dim=1)
+#             print('s_NxMC shape:', s_NxMC.detach().numpy().shape)
             if self.last_batch == True: 
 #                 print("continuous_pred: ", nn_output_mu_N.detach().numpy()[:5])
                 pass
