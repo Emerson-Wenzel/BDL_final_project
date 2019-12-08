@@ -123,8 +123,8 @@ class BNN(nn.Module):
     def __init__(self, input_dim, prior_mu=0, prior_s=0.01, linear_regression=False, preset=False, classification=False):
           super().__init__() 
           self.input_dim = input_dim
-          self.hidden_1_dim = 5
-          self.hidden_2_dim = 5
+          self.hidden_1_dim = 50
+          self.hidden_2_dim = 50
           self.output_dim = 2
           self.prior_mu = prior_mu
           self.prior_s = prior_s
@@ -200,6 +200,7 @@ class BNNBayesbyBackprop(nn.Module):
         self.prior_s = prior_s
         self.num_MC_samples = num_MC_samples
         self.classification = classification
+        self.class_weights = {0: 1, 1: 1}
         self.mean_likelihood = None
         self.log_prior = None
         self.log_posterior = None 
@@ -264,9 +265,9 @@ class BNNBayesbyBackprop(nn.Module):
 #             print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
 #             self.gradB = self.model.l1.b_mu_O.grad[0] 
 #             print("grad b ", self.gradB)
-        scalar = 1
-#         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples) + scalar * self.reg
-        loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + aggregate_log_s_N / self.num_MC_samples)
+        scalar = 0.0
+#         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + aggregate_log_s_N / self.num_MC_samples)
+        loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + (aggregate_log_s_N * scalar)) / self.num_MC_samples
 
         return loss #+ 1e6 * torch.exp(aggregate_log_s_N) / self.num_MC_samples
 
@@ -279,8 +280,8 @@ class BNNBayesbyBackprop(nn.Module):
             prob_of_zero_N = normal_cdf(logit_thresh, nn_output_mu_N, torch.exp(nn_output_log_s_N))
 
             likelihood_N = torch.empty(size=y_N.shape)
-            likelihood_N[y_N == 0] = prob_of_zero_N[y_N == 0]
-            likelihood_N[y_N == 1] = 1 - prob_of_zero_N[y_N == 1]
+            likelihood_N[y_N == 0] = prob_of_zero_N[y_N == 0] * self.class_weights[0]
+            likelihood_N[y_N == 1] = 1 - prob_of_zero_N[y_N == 1] * self.class_weights[1]
 
 #            aleatoric_likelihood_N = (likelihood_N / torch.exp(nn_output_log_s_N))
 #            log_likelihood_N = torch.log(aleatoric_likelihood_N + torch.relu(nn_output_log_s_N) + 1e-7)# + torch.sum(nn_output_log_s_N) # TODO <-- this summation of std could potentially make whole term negative. This would make the funciton break @ the log
@@ -295,13 +296,22 @@ class BNNBayesbyBackprop(nn.Module):
 
         return log_likelihood
 
-    def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False):
+    def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False, weight_classes=False):
         #loggingFileName = str(int(time.time())) + ".csv"
         loggingFileName = "logging.csv"
         print("Data being saved in following file:\n{}".format(loggingFileName))
         logger = open(loggingFileName, "w")
         logger.write("w1_1,w1_2,w2_1,w2_2,w1_1_grad,w1_2_grad,w2_1_grad,w2_2_grad,b_1,b_2,b_1_grad,b_2_grad,log_prior,log_posterior,mean_likelihood,reg\n")
         logger.close()
+
+        if weight_classes:
+            n_samples = y.shape[0]
+            n_classes = 2
+            class_weights = n_samples / (n_classes * np.bincount(y))
+            class_weights = class_weights / 30
+            print('class_weights:', class_weights)
+            self.class_weights[0] = class_weights[0]
+            self.class_weights[1] = class_weights[1]
         
         n_batches = int(np.ceil(X.shape[0] / batch_size))
         optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
@@ -400,8 +410,20 @@ class BNNBayesbyBackprop(nn.Module):
 
             # classification accuracy
             if self.classification:
-                acc = (pred.detach().numpy() == y_full.numpy()).astype(int).sum() / y_full.shape[0]
-                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc)
+                pred_np = pred.detach().numpy() 
+                y_full_np = y_full.numpy() 
+                acc = (pred_np == y_full_np).astype(int).sum() / y_full.shape[0]
+
+                true_pos = pred_np[y_full_np == 1].sum()
+                print(y_full_np)
+                print(pred_np[y_full_np == 1])
+                total_real_pos = y_full_np[y_full_np == 1].shape[0]
+                pred_pos = pred_np[pred_np == 1].shape[0]
+                print('true pos: ', true_pos, ' total real pos: ', total_real_pos, ' pred_pos: ', pred_pos)
+                precision = true_pos / pred_pos 
+
+                recall = true_pos / total_real_pos  
+                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\tprec: ', precision, '\trec: ', recall)
             else: 
             # regression accuracy
                 MAE = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
