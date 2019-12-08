@@ -183,7 +183,7 @@ class BNN(nn.Module):
 class BNNBayesbyBackprop(nn.Module):
     # Preset argument for use with debugging. For linear regression, if preset, pass dictionary of form {'W_mu': '', 'b_mu': ''}
     # where W_mu and b_mu will be used as means for the q distribution. 
-    def __init__(self, nn_dims=None, prior_mu=10, prior_s=0.05, num_MC_samples=100, linear_regression=False, preset=False, classification=False):
+    def __init__(self, nn_dims=None, prior_mu=10, prior_s=0.05, num_MC_samples=100, linear_regression=False, preset=False, classification=False, input_dim=2):
         '''
         nn_dims : list of layer sizes from input to output layer (of form: [input_dim, hidden_layer_1_dim, ..., output_dim])
           Note: optim taking in model.parameters has to have them specified as individual self.linear1, self.linear2 attributes,
@@ -203,7 +203,7 @@ class BNNBayesbyBackprop(nn.Module):
         self.gradB = None
 
         # self.model = BNN(38, self.prior_mu, self.prior_s)
-        self.model = BNN(2, self.prior_mu, self.prior_s, linear_regression, preset, classification)
+        self.model = BNN(input_dim, self.prior_mu, self.prior_s, linear_regression, preset, classification)
 
 #         for debugging
         self.last_batch = False
