@@ -205,6 +205,7 @@ class BNNBayesbyBackprop(nn.Module):
         self.log_posterior = None 
         self.elbo = None 
         self.gradB = None
+        self.reg = None
 
         # self.model = BNN(38, self.prior_mu, self.prior_s)
         self.model = BNN(input_dim, self.prior_mu, self.prior_s, linear_regression, preset, classification)
@@ -215,7 +216,7 @@ class BNNBayesbyBackprop(nn.Module):
 
     # @TODO: Does this scale with "batch size" or "traning set size" or what?
     def MC_elbo(self, X_ND, y_N, curr_batch, n_batches, epoch):
-#        self.model.zero_grad()        
+#         self.model.zero_grad()        
         # out[0] is the predicted mean, out[1] is the predicted std_dev
         aggregate_log_prior, aggregate_log_post_est, aggregate_log_likeli, aggregate_log_s_N = 0.0, 0.0, 0.0, 0.0
         for i in range(self.num_MC_samples):
@@ -242,25 +243,30 @@ class BNNBayesbyBackprop(nn.Module):
             aggregate_log_prior += sample_log_prior
             aggregate_log_post_est += sample_log_post_est
             aggregate_log_likeli += sample_log_likeli
-            # aggregate_log_s_N += nn_output_log_s_N.mean()
+            aggregate_log_s_N += nn_output_log_s_N.sum()
+#             print('log_s_N max\t', nn_output_log_s_N.detach().numpy().max())
+#             print('log_s_N min\t', nn_output_log_s_N.detach().numpy().min())
 
         self.log_prior = aggregate_log_prior.detach().numpy() / self.num_MC_samples
         self.log_posterior = aggregate_log_post_est.detach().numpy() / self.num_MC_samples
         self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
+        self.reg = aggregate_log_s_N.detach().numpy() / self.num_MC_samples 
 
 #        if epoch >= 40:
 #            print("{} {} {}".format(self.log_prior, self.log_posterior, self.mean_likelihood))
 
 #         if curr_batch == (n_batches - 1):
 #           #We assume that it is a scalar representing the total log prior(w, b) across all samples
-
+# 
 #             self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
 #             self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
 #             self.elbo.backward()
 #             print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
 #             self.gradB = self.model.l1.b_mu_O.grad[0] 
 #             print("grad b ", self.gradB)
-        loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)
+        scalar = 1
+#         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples) + scalar * self.reg
+        loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + aggregate_log_s_N / self.num_MC_samples)
 
         return loss #+ 1e6 * torch.exp(aggregate_log_s_N) / self.num_MC_samples
 
@@ -294,7 +300,7 @@ class BNNBayesbyBackprop(nn.Module):
         loggingFileName = "logging.csv"
         print("Data being saved in following file:\n{}".format(loggingFileName))
         logger = open(loggingFileName, "w")
-        logger.write("w1_1,w1_2,w2_1,w2_2,w1_1_grad,w1_2_grad,w2_1_grad,w2_2_grad,b_1,b_2,b_1_grad,b_2_grad,log_prior,log_posterior,mean_likelihood\n")
+        logger.write("w1_1,w1_2,w2_1,w2_2,w1_1_grad,w1_2_grad,w2_1_grad,w2_2_grad,b_1,b_2,b_1_grad,b_2_grad,log_prior,log_posterior,mean_likelihood,reg\n")
         logger.close()
         
         n_batches = int(np.ceil(X.shape[0] / batch_size))
@@ -332,7 +338,7 @@ class BNNBayesbyBackprop(nn.Module):
     #                        self.model.l1.b_log_s_O.detach().numpy().flatten(),
                             self.model.l1.b_mu_O.grad.numpy().flatten()
                 ]
-                toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood]
+                toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
                 # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad, log_prior, log_posterior, mean_likelihood
                 strToWrite = ','.join(map(str, toWrite))
                 logger = open(loggingFileName, "a")
