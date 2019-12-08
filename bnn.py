@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import time
 from mpl_toolkits.mplot3d import Axes3D  
-
+from scipy.special import logit
+import math
 
 def gauss_logpdf(x, mu, s):
     normalized_x = (x - mu) / s
@@ -13,6 +14,9 @@ def gauss_logpdf(x, mu, s):
         print('exploded')
     logprob = (-1 * (normalized_x ** 2) / 2) - 0.5 * np.log(2 * np.pi)
     return logprob
+
+def normal_cdf(x, mu, sigma):
+    return 0.5 * (1 + torch.erf((x - mu) * sigma.reciprocal() / math.sqrt(2)))
 
 class BNNLayer(nn.Module):
     def __init__(self, input_dim=30, output_dim=2, prior_mu=0, prior_s=0.01, preset=False):
@@ -247,41 +251,30 @@ class BNNBayesbyBackprop(nn.Module):
 #        if epoch >= 40:
 #            print("{} {} {}".format(self.log_prior, self.log_posterior, self.mean_likelihood))
 
-#        if curr_batch == (n_batches - 1):
-          #We assume that it is a scalar representing the total log prior(w, b) across all samples
+#         if curr_batch == (n_batches - 1):
+#           #We assume that it is a scalar representing the total log prior(w, b) across all samples
 
-#          self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
-#           self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
-#           self.elbo.backward()
-#           print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
-#           self.gradB = self.model.l1.b_mu_O.grad[0] 
-#           print("grad b ", self.gradB)
+#             self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
+#             self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
+#             self.elbo.backward()
+#             print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
+#             self.gradB = self.model.l1.b_mu_O.grad[0] 
+#             print("grad b ", self.gradB)
         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)
 
         return loss #+ 1e6 * torch.exp(aggregate_log_s_N) / self.num_MC_samples
 
     # @TODO: is it gauss_logpdf(y, sigmoid(pred_y), exp(nn_ouput_log_s_N))? or is it: MC sample: sigmoid(sample from N(pred_y, exp(nn_ouput_log_s_N))), threshold at [0.5]?
     def likelihood_est(self, y_N, nn_output_mu_N, nn_output_log_s_N, MC_samples=20):
-        pred_thresh = 0.5
+        pred_thresh = self.model.classification_threshold
+        logit_thresh = logit(pred_thresh)
 
         if self.classification:
-            # s_NxMC is NxMC where each row holds MC samples, s ~ N(mu(X_n), log_s(X_n))
-            # where mu(X_n) and log_s(X_n) are the BNN's predicted values for nth instances
-            s_N_list = []
-            for i in range(MC_samples): 
-                e = torch.Tensor(size=(y_N.shape)).normal_(0, 1.0)
-                #s_N = nn_output_mu_N + e * 0.1
-                s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
-                s_N_list.append(s_N)
-
-            s_NxMC = torch.stack(s_N_list, dim=1)
-            sigmoid = nn.Sigmoid()
-            probs_of_one_NxMC = sigmoid(s_NxMC)
-            avg_prob_of_one_N = probs_of_one_NxMC.mean(dim=1)
+            prob_of_zero_N = normal_cdf(logit_thresh, nn_output_mu_N, torch.exp(nn_output_log_s_N))
 
             likelihood_N = torch.empty(size=y_N.shape)
-            likelihood_N[y_N == 0] = 1 - avg_prob_of_one_N[y_N == 0]
-            likelihood_N[y_N == 1] = avg_prob_of_one_N[y_N == 1]
+            likelihood_N[y_N == 0] = prob_of_zero_N[y_N == 0]
+            likelihood_N[y_N == 1] = 1 - prob_of_zero_N[y_N == 1]
 
 #            aleatoric_likelihood_N = (likelihood_N / torch.exp(nn_output_log_s_N))
 #            log_likelihood_N = torch.log(aleatoric_likelihood_N + torch.relu(nn_output_log_s_N) + 1e-7)# + torch.sum(nn_output_log_s_N) # TODO <-- this summation of std could potentially make whole term negative. This would make the funciton break @ the log
