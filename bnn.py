@@ -415,11 +415,8 @@ class BNNBayesbyBackprop(nn.Module):
                 acc = (pred_np == y_full_np).astype(int).sum() / y_full.shape[0]
 
                 true_pos = pred_np[y_full_np == 1].sum()
-                print(y_full_np)
-                print(pred_np[y_full_np == 1])
                 total_real_pos = y_full_np[y_full_np == 1].shape[0]
                 pred_pos = pred_np[pred_np == 1].shape[0]
-                print('true pos: ', true_pos, ' total real pos: ', total_real_pos, ' pred_pos: ', pred_pos)
                 precision = true_pos / pred_pos 
 
                 recall = true_pos / total_real_pos  
