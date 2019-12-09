@@ -125,6 +125,7 @@ class BNN(nn.Module):
           self.input_dim = input_dim
           self.hidden_1_dim = 5
           self.hidden_2_dim = 5
+          self.hidden_3_dim = 5
           self.output_dim = 2
           self.prior_mu = prior_mu
           self.prior_s = prior_s
@@ -137,7 +138,9 @@ class BNN(nn.Module):
               self.activ_1_2 = nn.LeakyReLU()
               self.l2 = BNNLayer(self.hidden_1_dim, self.hidden_2_dim, self.prior_mu, self.prior_s)
               self.activ_2_3 = nn.LeakyReLU()
-              self.l3 = BNNLayer(self.hidden_2_dim, self.output_dim, self.prior_mu, self.prior_s)
+              self.l3 = BNNLayer(self.hidden_2_dim, self.hidden_3_dim, self.prior_mu, self.prior_s)
+              self.l4_mu = BNNLayer(self.hidden_3_dim, 1, self.prior_mu, self.prior_s)
+              self.l4_log_s = BNNLayer(self.hidden_3_dim, 1, self.prior_mu, self.prior_s)
           else:
               self.l1 = BNNLayer(self.input_dim, 2, self.prior_mu, self.prior_s, preset=preset) 
           
@@ -151,6 +154,9 @@ class BNN(nn.Module):
               output = self.activ_1_2(self.l1(X_ND, predict, num_preds))
               output = self.activ_2_3(self.l2(output, predict, num_preds))
               output = self.l3(output, predict, num_preds)
+              mean = self.l4_mu(output, predict, num_preds)
+              std = self.l4_log_s(output, predict, num_preds)
+              output = torch.stack((mean, std), dim=1).reshape(-1, 2)
           else:
               output = self.l1(X_ND, predict, num_preds)
 
@@ -175,8 +181,10 @@ class BNN(nn.Module):
 
     def calc_total_log_prior_log_post_est(self):
           if not self.linear_regression:
-            total_log_prior = self.l1.log_prior + self.l2.log_prior + self.l3.log_prior
-            total_log_post_est = self.l1.log_post_est + self.l2.log_post_est + self.l3.log_post_est
+            total_log_prior = (self.l1.log_prior + self.l2.log_prior + self.l3.log_prior +
+                               self.l4_mu.log_prior + self.l4_log_s.log_prior)
+            total_log_post_est = (self.l1.log_post_est + self.l2.log_post_est + self.l3.log_post_est +
+                                  self.l4_mu.log_post_est + self.l4_log_s.log_post_est)
             return total_log_prior, total_log_post_est
           else:
             return self.l1.log_prior, self.l1.log_post_est
@@ -224,12 +232,12 @@ class BNNBayesbyBackprop(nn.Module):
             nn_output_Nx2 = self.model(X_ND)
             nn_output_mu_N = nn_output_Nx2[:,0]
             nn_output_log_s_N = nn_output_Nx2[:,1]
-            if epoch < 30:
+            if epoch < 10:
                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
-#             elif (epoch >= 10) and (epoch < 15):
-#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
-#             elif (epoch >= 15) and (epoch < 30):
-#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=np.log(50))
+            elif (epoch >= 10) and (epoch < 15):
+                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
+            elif (epoch >= 15) and (epoch < 30):
+                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=25)
 
             # Artificial average value 
             #nn_output_mu_N[:,0] = torch.mm(X_ND, torch.tensor(W).float()) + torch.tensor(b)
@@ -245,14 +253,16 @@ class BNNBayesbyBackprop(nn.Module):
             aggregate_log_post_est += sample_log_post_est
             aggregate_log_likeli += sample_log_likeli
             aggregate_log_s_N += nn_output_log_s_N.sum()
-#             print('log_s_N max\t', nn_output_log_s_N.detach().numpy().max())
-#             print('log_s_N min\t', nn_output_log_s_N.detach().numpy().min())
+            print('log_s_N max\t', nn_output_log_s_N.detach().numpy().max())
+            print('log_s_N min\t', nn_output_log_s_N.detach().numpy().min())
 
         self.log_prior = aggregate_log_prior.detach().numpy() / self.num_MC_samples
         self.log_posterior = aggregate_log_post_est.detach().numpy() / self.num_MC_samples
         self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
         self.reg = aggregate_log_s_N.detach().numpy() / self.num_MC_samples 
 
+        print('log_prior: ', self.log_prior, '\tlog_posterior:', self.log_posterior,
+              '\tlikelihood: ', self.mean_likelihood, '\treg: ', self.reg)
 #        if epoch >= 40:
 #            print("{} {} {}".format(self.log_prior, self.log_posterior, self.mean_likelihood))
 
@@ -265,7 +275,7 @@ class BNNBayesbyBackprop(nn.Module):
 #             print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
 #             self.gradB = self.model.l1.b_mu_O.grad[0] 
 #             print("grad b ", self.gradB)
-        scalar = 1 
+        scalar = 1e-6
 #         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + aggregate_log_s_N / self.num_MC_samples)
         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + (aggregate_log_s_N * scalar)) / self.num_MC_samples
 
