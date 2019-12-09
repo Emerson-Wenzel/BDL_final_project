@@ -123,8 +123,8 @@ class BNN(nn.Module):
     def __init__(self, input_dim, prior_mu=0, prior_s=0.01, linear_regression=False, preset=False, classification=False):
           super().__init__() 
           self.input_dim = input_dim
-          self.hidden_1_dim = 50
-          self.hidden_2_dim = 50
+          self.hidden_1_dim = 5
+          self.hidden_2_dim = 5
           self.output_dim = 2
           self.prior_mu = prior_mu
           self.prior_s = prior_s
@@ -224,12 +224,12 @@ class BNNBayesbyBackprop(nn.Module):
             nn_output_Nx2 = self.model(X_ND)
             nn_output_mu_N = nn_output_Nx2[:,0]
             nn_output_log_s_N = nn_output_Nx2[:,1]
-            if epoch < 10:
+            if epoch < 30:
                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
-            elif (epoch >= 10) and (epoch < 15):
-                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
-            elif (epoch >= 15) and (epoch < 30):
-                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=np.log(50))
+#             elif (epoch >= 10) and (epoch < 15):
+#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
+#             elif (epoch >= 15) and (epoch < 30):
+#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=np.log(50))
 
             # Artificial average value 
             #nn_output_mu_N[:,0] = torch.mm(X_ND, torch.tensor(W).float()) + torch.tensor(b)
@@ -265,7 +265,7 @@ class BNNBayesbyBackprop(nn.Module):
 #             print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
 #             self.gradB = self.model.l1.b_mu_O.grad[0] 
 #             print("grad b ", self.gradB)
-        scalar = 0.0
+        scalar = 1 
 #         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + aggregate_log_s_N / self.num_MC_samples)
         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + (aggregate_log_s_N * scalar)) / self.num_MC_samples
 
@@ -340,20 +340,20 @@ class BNNBayesbyBackprop(nn.Module):
                 batch_losses.append(loss.detach().numpy())
                 loss.backward()
                 optimizer.step()
-                toWrite = [
-                            self.model.l1.W_mu_DO.detach().numpy().flatten(),
-                            #self.model.l1.W_log_s_DO.detach().numpy().flatten(),
-                            self.model.l1.W_mu_DO.grad.numpy().flatten(),
-                            self.model.l1.b_mu_O.detach().numpy().flatten(),
-    #                        self.model.l1.b_log_s_O.detach().numpy().flatten(),
-                            self.model.l1.b_mu_O.grad.numpy().flatten()
-                ]
-                toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
-                # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad, log_prior, log_posterior, mean_likelihood
-                strToWrite = ','.join(map(str, toWrite))
-                logger = open(loggingFileName, "a")
-                logger.write(strToWrite + '\n')
-                logger.close()
+            toWrite = [
+                        self.model.l1.W_mu_DO.detach().numpy().T.flatten(),
+                        #self.model.l1.W_log_s_DO.detach().numpy().flatten(),
+                        self.model.l1.W_mu_DO.grad.numpy().T.flatten(),
+                        self.model.l1.b_mu_O.detach().numpy().flatten(),
+#                        self.model.l1.b_log_s_O.detach().numpy().flatten(),
+                        self.model.l1.b_mu_O.grad.numpy().flatten()
+            ]
+            toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
+            # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad, log_prior, log_posterior, mean_likelihood
+            strToWrite = ','.join(map(str, toWrite))
+            logger = open(loggingFileName, "a")
+            logger.write(strToWrite + '\n')
+            logger.close()
 
 ##                if np.isnan(self.model.l1.W_mu_DO.detach().numpy()).any():
 #                    breakTime = True
@@ -417,14 +417,18 @@ class BNNBayesbyBackprop(nn.Module):
                 true_pos = pred_np[y_full_np == 1].sum()
                 total_real_pos = y_full_np[y_full_np == 1].shape[0]
                 pred_pos = pred_np[pred_np == 1].shape[0]
-                precision = true_pos / pred_pos 
+                try:
+                    precision = true_pos / pred_pos 
+                except ZeroDivisionError: 
+                    precision = 0
 
                 recall = true_pos / total_real_pos  
                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\tprec: ', precision, '\trec: ', recall)
             else: 
             # regression accuracy
                 MAE = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
-                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE)
+                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE, 
+                      '\tb: ', self.model.l1.b_mu_O[1].detach().numpy(), '\tW:', self.model.l1.W_mu_DO[1][1].detach().numpy())
             # print()
             # print("pred: ", pred.detach().numpy()[:5])
             # print("real: ", y_full.numpy().reshape(-1)[:5])
