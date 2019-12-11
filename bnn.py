@@ -232,17 +232,12 @@ class BNNBayesbyBackprop(nn.Module):
             nn_output_Nx2 = self.model(X_ND)
             nn_output_mu_N = nn_output_Nx2[:,0]
             nn_output_log_s_N = nn_output_Nx2[:,1]
-            if epoch < 10:
+            if epoch < 25:
                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
-            elif (epoch >= 10) and (epoch < 15):
+            elif (epoch >= 25) and (epoch < 30):
                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
-            elif (epoch >= 15) and (epoch < 30):
-                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=25)
-
-            # Artificial average value 
-            #nn_output_mu_N[:,0] = torch.mm(X_ND, torch.tensor(W).float()) + torch.tensor(b)
-            #nn_output_log_s_N = torch.ones(nn_output_mu_N[:,1].shape)
-
+#             elif (epoch >= 15) and (epoch < 30):
+#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=25)
 
             # Aggregated probabilities across an entire batch/trainset for each sample
             sample_log_likeli = self.likelihood_est(y_N, nn_output_mu_N, nn_output_log_s_N)
@@ -253,19 +248,21 @@ class BNNBayesbyBackprop(nn.Module):
             aggregate_log_post_est += sample_log_post_est
             aggregate_log_likeli += sample_log_likeli
             aggregate_log_s_N += nn_output_log_s_N.sum()
-            print('log_s_N max\t', nn_output_log_s_N.detach().numpy().max())
-            print('log_s_N min\t', nn_output_log_s_N.detach().numpy().min())
+#                 print('log_s_N max\t', nn_output_log_s_N.detach().numpy().max())
+#                 print('log_s_N min\t', nn_output_log_s_N.detach().numpy().min())
+
+        scalar = 1e-3
 
         self.log_prior = aggregate_log_prior.detach().numpy() / self.num_MC_samples
         self.log_posterior = aggregate_log_post_est.detach().numpy() / self.num_MC_samples
         self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
-        self.reg = aggregate_log_s_N.detach().numpy() / self.num_MC_samples 
+        self.reg = scalar * (aggregate_log_s_N.detach().numpy() / self.num_MC_samples)
 
-        print('log_prior: ', self.log_prior, '\tlog_posterior:', self.log_posterior,
-              '\tlikelihood: ', self.mean_likelihood, '\treg: ', self.reg)
 #        if epoch >= 40:
 #            print("{} {} {}".format(self.log_prior, self.log_posterior, self.mean_likelihood))
 
+#       *************************** The below code block is necessary to manually test the gradient calculation *****************************
+#
 #         if curr_batch == (n_batches - 1):
 #           #We assume that it is a scalar representing the total log prior(w, b) across all samples
 # 
@@ -275,11 +272,13 @@ class BNNBayesbyBackprop(nn.Module):
 #             print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
 #             self.gradB = self.model.l1.b_mu_O.grad[0] 
 #             print("grad b ", self.gradB)
-        scalar = 1e-6
 #         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + aggregate_log_s_N / self.num_MC_samples)
-        loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + (aggregate_log_s_N * scalar)) / self.num_MC_samples
 
-        return loss #+ 1e6 * torch.exp(aggregate_log_s_N) / self.num_MC_samples
+        loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + (aggregate_log_s_N * scalar)) / self.num_MC_samples
+        print('log_prior: ', self.log_prior, '\tlog_posterior:', self.log_posterior,
+                '\tlikelihood: ', self.mean_likelihood, '\treg: ', self.reg)
+
+        return loss 
 
     # @TODO: is it gauss_logpdf(y, sigmoid(pred_y), exp(nn_ouput_log_s_N))? or is it: MC sample: sigmoid(sample from N(pred_y, exp(nn_ouput_log_s_N))), threshold at [0.5]?
     def likelihood_est(self, y_N, nn_output_mu_N, nn_output_log_s_N, MC_samples=20):
@@ -288,6 +287,7 @@ class BNNBayesbyBackprop(nn.Module):
 
         if self.classification:
             prob_of_zero_N = normal_cdf(logit_thresh, nn_output_mu_N, torch.exp(nn_output_log_s_N))
+#             prob_of_zero_N = normal_cdf(logit_thresh, nn_output_mu_N, torch.tensor(0.1))
 
             likelihood_N = torch.empty(size=y_N.shape)
             likelihood_N[y_N == 0] = prob_of_zero_N[y_N == 0] * self.class_weights[0]
@@ -299,7 +299,7 @@ class BNNBayesbyBackprop(nn.Module):
             log_likelihood = log_likelihood_N.sum()
 
         else:
-            stds = torch.exp(nn_output_log_s_N)#10 * torch.ones([y_N.shape[0]], dtype=torch.float64) #
+            stds = torch.exp(nn_output_log_s_N)
             log_likelihood_N = gauss_logpdf(y_N.reshape(-1), nn_output_mu_N, stds)
             # log_likelihood_N = gauss_logpdf(y_N.reshape(-1), nn_output_mu_N, 0.01)
             log_likelihood = log_likelihood_N.sum()
@@ -433,6 +433,7 @@ class BNNBayesbyBackprop(nn.Module):
                     precision = 0
 
                 recall = true_pos / total_real_pos  
+                print('var weight: ', self.model.l1.W_mu_DO[0][1].detach().numpy(), 'bias: ', self.model.l1.b_mu_O[1].detach().numpy())
                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\tprec: ', precision, '\trec: ', recall)
             else: 
             # regression accuracy
