@@ -77,7 +77,6 @@ class BNNLayer(nn.Module):
         if predict:
             # print("W_mu_DO shape: ", self.W_mu_DO.shape)
             (W_DO, b_O) = self.W_b_by_reparam()
-            # print("X_ND[1]", X_ND[1])
             self.usedWeights = W_DO
             self.usedBias = b_O
 #             pred = torch.mm(X_ND, W_DO) + b_O.expand(X_ND.size()[0], self.output_dim)
@@ -110,7 +109,7 @@ class BNNLayer(nn.Module):
             # print("output shape: ", output.shape)
             self.log_prior = (gauss_logpdf(W_DO, self.prior_mu, self.prior_s).sum() + 
                               gauss_logpdf(b_O, self.prior_mu, self.prior_s).sum()) 
-
+            
 
             self.log_post_est = (gauss_logpdf(W_DO, self.W_mu_DO, torch.exp(self.W_log_s_DO)).sum() +
                                  gauss_logpdf(b_O, self.b_mu_O, torch.exp(self.b_log_s_O)).sum())
@@ -120,29 +119,50 @@ class BNNLayer(nn.Module):
 
 
 class BNN(nn.Module):
-    def __init__(self, input_dim, prior_mu=0, prior_s=0.01, linear_regression=False, preset=False, classification=False):
+    def __init__(self, input_dim, core_hidden_layers=[], mu_hidden_layers=[], log_s_hidden_layers=[], prior_mu=0, prior_s=0.01, preset=False, classification=False):
           super().__init__() 
           self.input_dim = input_dim
-          self.hidden_1_dim = 5
-          self.hidden_2_dim = 5
-          self.hidden_3_dim = 5
-          self.output_dim = 2
           self.prior_mu = prior_mu
           self.prior_s = prior_s
+          self.activ = nn.LeakyReLU()
+          self.core_layers = nn.ModuleList()
+          self.mu_layers = nn.ModuleList()
+          self.log_s_layers = nn.ModuleList()
 
-          self.linear_regression = linear_regression
+          core_hidden_layers = []
+          mu_hidden_layers = []
+          log_s_hidden_layers = []
+          core_layer_list = [input_dim] + core_hidden_layers
+
+          # if core_layer_list only input_dim, then only build mu and log_s layers (i.e. no shared layers)
+          if len(core_layer_list) > 1:
+              # build core layers
+              for i, layer_size_i in enumerate(core_layer_list):
+                  if i == 0:
+                      continue
+                  else:
+                      self.core_layers.append(BNNLayer(core_layer_list[i - 1], layer_size_i, self.prior_mu, self.prior_s))
+                  
+          # both layer lists below will contain sizes for hidden layers and always end with 1 for the size of output layer
+          mu_layer_list = [core_layer_list[-1]] + mu_hidden_layers + [1]
+          log_s_layer_list = [core_layer_list[-1]] + log_s_hidden_layers + [1]
+ 
+          # build mu layers after split head
+          for i , layer_size_i in enumerate(mu_layer_list): 
+              if i == 0:
+                  continue
+              else:
+                  self.mu_layers.append(BNNLayer(mu_layer_list[i - 1], layer_size_i, self.prior_mu, self.prior_s))
+
+          # build log_s layers after split head
+          for i , layer_size_i in enumerate(log_s_layer_list): 
+              if i == 0:
+                  continue
+              else:
+                  self.log_s_layers.append(BNNLayer(log_s_layer_list[i - 1], layer_size_i, self.prior_mu, self.prior_s))
+
           self.classification = classification
 
-          if not linear_regression:
-              self.l1 = BNNLayer(self.input_dim, self.hidden_1_dim, self.prior_mu, self.prior_s)
-              self.activ_1_2 = nn.LeakyReLU()
-              self.l2 = BNNLayer(self.hidden_1_dim, self.hidden_2_dim, self.prior_mu, self.prior_s)
-              self.activ_2_3 = nn.LeakyReLU()
-              self.l3 = BNNLayer(self.hidden_2_dim, self.hidden_3_dim, self.prior_mu, self.prior_s)
-              self.l4_mu = BNNLayer(self.hidden_3_dim, 1, self.prior_mu, self.prior_s)
-              self.l4_log_s = BNNLayer(self.hidden_3_dim, 1, self.prior_mu, self.prior_s)
-          else:
-              self.l1 = BNNLayer(self.input_dim, 2, self.prior_mu, self.prior_s, preset=preset) 
           
           # Not used for std dev prediction
           self.classification_threshold = 0.5
@@ -150,15 +170,58 @@ class BNN(nn.Module):
 
 
     def forward(self, X_ND, predict=False, num_preds=1):
-          if not self.linear_regression:
-              output = self.activ_1_2(self.l1(X_ND, predict, num_preds))
-              output = self.activ_2_3(self.l2(output, predict, num_preds))
-              output = self.l3(output, predict, num_preds)
-              mean = self.l4_mu(output, predict, num_preds)
-              std = self.l4_log_s(output, predict, num_preds)
-              output = torch.stack((mean, std), dim=1).reshape(-1, 2)
-          else:
-              output = self.l1(X_ND, predict, num_preds)
+          if isinstance(X_ND, np.ndarray):
+              X_ND = torch.tensor(X_ND, dtype=torch.float)
+
+
+          output = X_ND
+          if len(self.core_layers) > 0:
+              for layer in self.core_layers:
+                  output = self.activ(layer(output, predict, num_preds))
+
+          # Feel like this might be wrong and we might need to do some 
+          # sort of deep copy here
+
+          mu_output = output
+          log_s_output = output
+
+#           print('mu_output: ', mu_output)
+          for i, layer in enumerate(self.mu_layers):
+              if i != len(self.log_s_layers) - 1:
+                  mu_output = self.activ(layer(mu_output, predict, num_preds))
+              else:
+                  # output layer -- no activation
+                  mean = layer(mu_output, predict, num_preds)
+
+#           print('log_s_output: ', log_s_output)
+          for i, layer in enumerate(self.log_s_layers):
+              if i != len(self.log_s_layers) - 1:
+                  log_s_output = self.activ(layer(log_s_output, predict, num_preds))
+              else:
+                  # output layer -- no activation
+                  log_s = layer(log_s_output, predict, num_preds)
+
+
+          output = torch.stack((mean, log_s), dim=1).reshape(-1, 2)
+          
+
+#           if not self.linear_regression:
+#               output = self.activ_1(self.l1(X_ND, predict, num_preds))
+#               output = self.activ_2(self.l2(output, predict, num_preds))
+#               output = self.activ_3(self.l3(output, predict, num_preds))
+#               output = self.activ_4(self.l4(output, predict, num_preds))
+#               # split the heads
+#               output_mean = self.activ_5(self.l5_mu(output, predict, num_preds))
+#               output_mean = self.activ_6(self.l6_mu(output_mean, predict, num_preds))
+#               mean = self.l7_output_mu(output_mean, predict, num_preds)
+# 
+#               output_log_s = self.activ_5(self.l5_log_s(output, predict, num_preds))
+#               output_log_s = self.activ_6(self.l6_log_s(output_log_s, predict, num_preds))
+#               log_s = self.l7_output_log_s(output_log_s, predict, num_preds)
+# 
+#               output = torch.stack((mean, log_s), dim=1).reshape(-1, 2)
+#           else:
+#               output = self.l1(X_ND, predict, num_preds)
 
           if predict:
 
@@ -180,22 +243,31 @@ class BNN(nn.Module):
           return output
 
     def calc_total_log_prior_log_post_est(self):
-          if not self.linear_regression:
-            total_log_prior = (self.l1.log_prior + self.l2.log_prior + self.l3.log_prior +
-                               self.l4_mu.log_prior + self.l4_log_s.log_prior)
-            total_log_post_est = (self.l1.log_post_est + self.l2.log_post_est + self.l3.log_post_est +
-                                  self.l4_mu.log_post_est + self.l4_log_s.log_post_est)
-            return total_log_prior, total_log_post_est
+          if len(self.core_layers) > 0:
+              total_log_prior_core = sum([layer.log_prior for layer in self.core_layers])
           else:
-            return self.l1.log_prior, self.l1.log_post_est
-    # Returns churn/not binary churn predictions (nx1) for data X (nxd)
-    # as numpy?? tensor??
+              total_log_prior_core = 0
+          total_log_prior_mu = sum([layer.log_prior for layer in self.mu_layers])
+          total_log_prior_log_s = sum([layer.log_prior for layer in self.log_s_layers])
+          total_log_prior = total_log_prior_core + total_log_prior_mu + total_log_prior_log_s 
+
+          if len(self.core_layers) > 0:
+              total_log_post_est_core = sum([layer.log_post_est for layer in self.core_layers])
+          else:
+              total_log_post_est_core = 0
+          total_log_post_est_mu = sum([layer.log_post_est for layer in self.mu_layers]) 
+          total_log_post_est_log_s = sum([layer.log_post_est for layer in self.log_s_layers])
+          total_log_post_est = total_log_post_est_core + total_log_post_est_mu + total_log_post_est_log_s 
+
+          return total_log_prior, total_log_post_est
 
 
 class BNNBayesbyBackprop(nn.Module):
-    # Preset argument for use with debugging. For linear regression, if preset, pass dictionary of form {'W_mu': '', 'b_mu': ''}
-    # where W_mu and b_mu will be used as means for the q distribution. 
-    def __init__(self, nn_dims=None, prior_mu=10, prior_s=0.05, num_MC_samples=100, linear_regression=False, preset=False, classification=False, input_dim=2):
+    # core_hidden_layers is list of hidden sizes for all shared layers of the network
+    # mu_hidden_layers is list of hidden sizes for all hidden layers specific to the mu head
+    # log_s_hidden_layers is list of hidden sizes for all hidden layers specific to the log_s head
+    def __init__(self, input_dim=2, core_hidden_layers=[], mu_hidden_layers=[], log_s_hidden_layers=[], 
+                 prior_mu=10, prior_s=0.05, num_MC_samples=100, linear_regression=False, preset=False, classification=False):
         '''
         nn_dims : list of layer sizes from input to output layer (of form: [input_dim, hidden_layer_1_dim, ..., output_dim])
           Note: optim taking in model.parameters has to have them specified as individual self.linear1, self.linear2 attributes,
@@ -217,7 +289,8 @@ class BNNBayesbyBackprop(nn.Module):
         self.reg = None
 
         # self.model = BNN(38, self.prior_mu, self.prior_s)
-        self.model = BNN(input_dim, self.prior_mu, self.prior_s, linear_regression, preset, classification)
+        self.model = BNN(input_dim, core_hidden_layers, mu_hidden_layers, log_s_hidden_layers,
+                         self.prior_mu, self.prior_s, preset, classification)
 
 #         for debugging
         self.last_batch = False
@@ -232,9 +305,9 @@ class BNNBayesbyBackprop(nn.Module):
             nn_output_Nx2 = self.model(X_ND)
             nn_output_mu_N = nn_output_Nx2[:,0]
             nn_output_log_s_N = nn_output_Nx2[:,1]
-            if epoch < 25:
+            if epoch < 50:
                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
-            elif (epoch >= 25) and (epoch < 30):
+            elif (epoch >= 50) and (epoch < 70):
                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
 #             elif (epoch >= 15) and (epoch < 30):
 #                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=25)
@@ -251,7 +324,7 @@ class BNNBayesbyBackprop(nn.Module):
 #                 print('log_s_N max\t', nn_output_log_s_N.detach().numpy().max())
 #                 print('log_s_N min\t', nn_output_log_s_N.detach().numpy().min())
 
-        scalar = 1e-3
+        scalar = 1
 
         self.log_prior = aggregate_log_prior.detach().numpy() / self.num_MC_samples
         self.log_posterior = aggregate_log_post_est.detach().numpy() / self.num_MC_samples
@@ -264,38 +337,56 @@ class BNNBayesbyBackprop(nn.Module):
 #       *************************** The below code block is necessary to manually test the gradient calculation *****************************
 #
 #         if curr_batch == (n_batches - 1):
-#           #We assume that it is a scalar representing the total log prior(w, b) across all samples
-# 
+          #We assume that it is a scalar representing the total log prior(w, b) across all samples
+
 #             self.mean_likelihood = aggregate_log_likeli.detach().numpy() / self.num_MC_samples
 #             self.elbo = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) / self.num_MC_samples)  
 #             self.elbo.backward()
-#             print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
-#             self.gradB = self.model.l1.b_mu_O.grad[0] 
+# #             print("\ngrads w1 ", self.model.l1.W_mu_DO.grad[:,0])
+# #             self.gradB = self.model.l1.b_mu_O.grad[0] 
+# #             print("grad b ", self.gradB)
+#             print("\ngrads w1 ", self.model.mu_layers[0].W_mu_DO.grad[:,0])
+#             self.gradB = self.model.mu_layers[0].b_mu_O.grad[0] 
 #             print("grad b ", self.gradB)
-#         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + aggregate_log_s_N / self.num_MC_samples)
 
-        loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + (aggregate_log_s_N * scalar)) / self.num_MC_samples
-        print('log_prior: ', self.log_prior, '\tlog_posterior:', self.log_posterior,
-                '\tlikelihood: ', self.mean_likelihood, '\treg: ', self.reg)
+#       **************************************************************************************************************************************
+
+#         Old loss function which had the bias term which seemed to help with convergence for regression
+#         loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est) + (aggregate_log_s_N * scalar)) / self.num_MC_samples
+
+        loss = (-1 * (aggregate_log_prior + aggregate_log_likeli - aggregate_log_post_est)) / self.num_MC_samples
+#         print('log_prior: ', self.log_prior, '\tlog_posterior:', self.log_posterior,
+#                 '\tlikelihood: ', self.mean_likelihood, '\treg: ', self.reg)
 
         return loss 
 
     # @TODO: is it gauss_logpdf(y, sigmoid(pred_y), exp(nn_ouput_log_s_N))? or is it: MC sample: sigmoid(sample from N(pred_y, exp(nn_ouput_log_s_N))), threshold at [0.5]?
     def likelihood_est(self, y_N, nn_output_mu_N, nn_output_log_s_N, MC_samples=20):
-        pred_thresh = self.model.classification_threshold
-        logit_thresh = logit(pred_thresh)
 
         if self.classification:
-            prob_of_zero_N = normal_cdf(logit_thresh, nn_output_mu_N, torch.exp(nn_output_log_s_N))
-#             prob_of_zero_N = normal_cdf(logit_thresh, nn_output_mu_N, torch.tensor(0.1))
+            sigmoid = nn.Sigmoid()
+            s_N_list = []
 
+            for i in range(MC_samples): 
+                e = torch.Tensor(size=(y_N.shape)).normal_(0, 1.0)
+                #s_N = nn_output_mu_N + e * 0.1
+                s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
+                s_N_list.append(s_N)
+
+            # s_NxMC is NxMC where each row holds MC samples, s ~ N(mu(X_n), log_s(X_n))
+            # where mu(X_n) and log_s(X_n) are the BNN's predicted values for nth instances
+            s_NxMC = torch.stack(s_N_list, dim=1)
+
+            probs_of_one_NxMC = sigmoid(s_NxMC)
+            avg_prob_of_one_N = probs_of_one_NxMC.mean(dim=1)
             likelihood_N = torch.empty(size=y_N.shape)
-            likelihood_N[y_N == 0] = prob_of_zero_N[y_N == 0] * self.class_weights[0]
-            likelihood_N[y_N == 1] = 1 - prob_of_zero_N[y_N == 1] * self.class_weights[1]
 
-#            aleatoric_likelihood_N = (likelihood_N / torch.exp(nn_output_log_s_N))
-#            log_likelihood_N = torch.log(aleatoric_likelihood_N + torch.relu(nn_output_log_s_N) + 1e-7)# + torch.sum(nn_output_log_s_N) # TODO <-- this summation of std could potentially make whole term negative. This would make the funciton break @ the log
-            log_likelihood_N = torch.log(likelihood_N + 1e-7)  # TODO reimplement this and comment out upper line to make it work
+            # fill likelihood_N with probability of 0 or 1 depending on true label
+            likelihood_N[y_N == 0] = 1 - avg_prob_of_one_N[y_N == 0]
+            likelihood_N[y_N == 1] = avg_prob_of_one_N[y_N == 1]
+
+            # add small number in log for numerical stability
+            log_likelihood_N = torch.log(likelihood_N + 1e-7)  
             log_likelihood = log_likelihood_N.sum()
 
         else:
@@ -306,12 +397,41 @@ class BNNBayesbyBackprop(nn.Module):
 
         return log_likelihood
 
+
+    def _logging_header(self):
+        core_layer_list = []
+        for i, layer_i in enumerate(self.model.core_layers):
+            # layer.output_dim is the number of hidden nodes
+            for n in range(layer_i.input_dim):
+                for o in range(layer_i.output_dim):
+                    core_layer_list.append("l{}_w{}{}".format(i, n, o))
+
+        mu_layer_list = []
+        for i, layer_i in enumerate(self.model.mu_layers):
+            # layer.output_dim is the number of hidden nodes
+            for n in range(layer_i.input_dim):
+                for o in range(layer_i.output_dim):
+                    mu_layer_list.append("mu_l{}_w{}{}".format(i, n, o))
+
+        log_s_layer_list = []
+        for i, layer_i in enumerate(self.model.log_s_layers):
+            # layer.output_dim is the number of hidden nodes
+            for n in range(layer_i.input_dim):
+                for o in range(layer_i.output_dim):
+                    log_s_layer_list.append("log_s_l{}_w{}{}".format(i, n, o))
+
+#         print(core_layer_list + mu_layer_list + log_s_layer_list)
+        strToWrite = ','.join(map(str, core_layer_list + mu_layer_list + log_s_layer_list))
+        header = strToWrite + ",log_prior,log_posterior,mean_likelihood,reg\n"
+        return header
+
     def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False, weight_classes=False):
-        #loggingFileName = str(int(time.time())) + ".csv"
+        loggingFileName = str(int(time.time())) + ".csv"
         loggingFileName = "logging.csv"
         print("Data being saved in following file:\n{}".format(loggingFileName))
         logger = open(loggingFileName, "w")
-        logger.write("w1_1,w1_2,w2_1,w2_2,w1_1_grad,w1_2_grad,w2_1_grad,w2_2_grad,b_1,b_2,b_1_grad,b_2_grad,log_prior,log_posterior,mean_likelihood,reg\n")
+        header = self._logging_header()
+        logger.write(header)
         logger.close()
 
         if weight_classes:
@@ -350,15 +470,19 @@ class BNNBayesbyBackprop(nn.Module):
                 batch_losses.append(loss.detach().numpy())
                 loss.backward()
                 optimizer.step()
-            toWrite = [
-                        self.model.l1.W_mu_DO.detach().numpy().T.flatten(),
-                        #self.model.l1.W_log_s_DO.detach().numpy().flatten(),
-                        self.model.l1.W_mu_DO.grad.numpy().T.flatten(),
-                        self.model.l1.b_mu_O.detach().numpy().flatten(),
-#                        self.model.l1.b_log_s_O.detach().numpy().flatten(),
-                        self.model.l1.b_mu_O.grad.numpy().flatten()
-            ]
+            toWrite = []
+            # get weights
+            for layer in self.model.core_layers:
+                toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
+            for layer in self.model.mu_layers:
+                toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
+            for layer in self.model.log_s_layers:
+                toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
+            # weight grads
+            # biases
+            # bias grads
             toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
+#             toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
             # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad, log_prior, log_posterior, mean_likelihood
             strToWrite = ','.join(map(str, toWrite))
             logger = open(loggingFileName, "a")
@@ -433,8 +557,12 @@ class BNNBayesbyBackprop(nn.Module):
                     precision = 0
 
                 recall = true_pos / total_real_pos  
-                print('var weight: ', self.model.l1.W_mu_DO[0][1].detach().numpy(), 'bias: ', self.model.l1.b_mu_O[1].detach().numpy())
-                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\tprec: ', precision, '\trec: ', recall)
+#                 print('var weight: ', self.model.l1.W_mu_DO[0][1].detach().numpy(), 'bias: ', self.model.l1.b_mu_O[1].detach().numpy())
+                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc)
+#                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc,
+#                       '\tb: ', self.model.l1.b_mu_O[1].detach().numpy(), '\tW_1:', self.model.l1.W_mu_DO[0][1].detach().numpy(),
+#                       '\tW_2: ',  self.model.l1.W_mu_DO[1][1].detach().numpy())
+#                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc, '\tprec: ', precision, '\trec: ', recall)
             else: 
             # regression accuracy
                 MAE = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
