@@ -242,14 +242,17 @@ class BNNBayesbyBackprop(nn.Module):
     # mu_hidden_layers is list of hidden sizes for all hidden layers specific to the mu head
     # log_s_hidden_layers is list of hidden sizes for all hidden layers specific to the log_s head
     def __init__(self, input_dim=2, core_hidden_layers=[], mu_hidden_layers=[], log_s_hidden_layers=[], 
-                 prior_mu=10, prior_s=0.05, num_MC_samples=100, classification=False, heteroscedastic_var=True):
+                 prior_mu=10, prior_s=0.05, num_MC_samples=100, classification=False, homoscedastic_var=None):
         super().__init__()
         
         self.prior_mu = prior_mu
         self.prior_s = prior_s
         self.num_MC_samples = num_MC_samples
         self.classification = classification
-        self.heteroscedastic_var = heteroscedastic_var
+        if homoscedastic_var:
+            self.homoscedastic_std = np.sqrt(homoscedastic_var)
+        else:
+            self.homoscedastic_std = None
         self.class_weights = {0: 1, 1: 1}
         self.mean_likelihood = None
         self.log_prior = None
@@ -340,10 +343,10 @@ class BNNBayesbyBackprop(nn.Module):
 
             for i in range(MC_samples): 
                 e = torch.Tensor(size=(y_N.shape)).normal_(0, 1.0)
-                if self.heteroscedastic_var:
-                    stds = torch.exp(nn_output_log_s_N)
+                if self.homoscedastic_std:
+                    stds = self.homoscedastic_std
                 else:
-                    stds = 0.1
+                    stds = torch.exp(nn_output_log_s_N)
                 s_N = nn_output_mu_N + e * stds
                 s_N_list.append(s_N)
 
