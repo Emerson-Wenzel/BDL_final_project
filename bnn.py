@@ -19,7 +19,7 @@ def normal_cdf(x, mu, sigma):
     return 0.5 * (1 + torch.erf((x - mu) * sigma.reciprocal() / math.sqrt(2)))
 
 class BNNLayer(nn.Module):
-    def __init__(self, input_dim=30, output_dim=2, prior_mu=0, prior_s=0.01, preset=False):
+    def __init__(self, input_dim=30, output_dim=2, prior_mu=0, prior_s=0.01):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -39,14 +39,6 @@ class BNNLayer(nn.Module):
         self.b_mu_O = nn.Parameter(torch.Tensor(output_dim).normal_(0, 0.1))
         # Log stds of biases, shape output dim
         self.b_log_s_O = nn.Parameter(torch.Tensor(output_dim).normal_(0, 0.1))
-
-        if preset != False:
-            W_mu, b_mu = preset['W_mu'], preset['b_mu']
-            self.W_mu_DO = nn.Parameter(torch.Tensor(W_mu))
-            self.W_log_s_DO = nn.Parameter(torch.Tensor([[-3, -3],
-                                                         [-3, -3]]))
-            self.b_mu_O = nn.Parameter(torch.Tensor(b_mu))
-            self.b_log_s_O = nn.Parameter(torch.Tensor([-1, -1]))
 
         self.log_prior = 0
         self.log_post_est = 0
@@ -119,12 +111,14 @@ class BNNLayer(nn.Module):
 
 
 class BNN(nn.Module):
-    def __init__(self, input_dim, core_hidden_layers=[], mu_hidden_layers=[], log_s_hidden_layers=[], prior_mu=0, prior_s=0.01, preset=False, classification=False):
+    def __init__(self, input_dim, core_hidden_layers=[], mu_hidden_layers=[], log_s_hidden_layers=[], prior_mu=0, prior_s=0.01,
+                 classification=False):
           super().__init__() 
           self.input_dim = input_dim
           self.prior_mu = prior_mu
           self.prior_s = prior_s
-          self.activ = nn.LeakyReLU()
+#           self.activ = nn.LeakyReLU()
+          self.activ = nn.Tanh()
           self.core_layers = nn.ModuleList()
           self.mu_layers = nn.ModuleList()
           self.log_s_layers = nn.ModuleList()
@@ -204,25 +198,6 @@ class BNN(nn.Module):
 
           output = torch.stack((mean, log_s), dim=1).reshape(-1, 2)
           
-
-#           if not self.linear_regression:
-#               output = self.activ_1(self.l1(X_ND, predict, num_preds))
-#               output = self.activ_2(self.l2(output, predict, num_preds))
-#               output = self.activ_3(self.l3(output, predict, num_preds))
-#               output = self.activ_4(self.l4(output, predict, num_preds))
-#               # split the heads
-#               output_mean = self.activ_5(self.l5_mu(output, predict, num_preds))
-#               output_mean = self.activ_6(self.l6_mu(output_mean, predict, num_preds))
-#               mean = self.l7_output_mu(output_mean, predict, num_preds)
-# 
-#               output_log_s = self.activ_5(self.l5_log_s(output, predict, num_preds))
-#               output_log_s = self.activ_6(self.l6_log_s(output_log_s, predict, num_preds))
-#               log_s = self.l7_output_log_s(output_log_s, predict, num_preds)
-# 
-#               output = torch.stack((mean, log_s), dim=1).reshape(-1, 2)
-#           else:
-#               output = self.l1(X_ND, predict, num_preds)
-
           if predict:
 
               if self.classification:
@@ -266,19 +241,17 @@ class BNNBayesbyBackprop(nn.Module):
     # mu_hidden_layers is list of hidden sizes for all hidden layers specific to the mu head
     # log_s_hidden_layers is list of hidden sizes for all hidden layers specific to the log_s head
     def __init__(self, input_dim=2, core_hidden_layers=[], mu_hidden_layers=[], log_s_hidden_layers=[], 
-                 prior_mu=10, prior_s=0.05, num_MC_samples=100, linear_regression=False, preset=False, classification=False):
-        '''
-        nn_dims : list of layer sizes from input to output layer (of form: [input_dim, hidden_layer_1_dim, ..., output_dim])
-          Note: optim taking in model.parameters has to have them specified as individual self.linear1, self.linear2 attributes,
-          not as a list of nn.linear's
-          @TODO: For now, assume just one input layer, one output layer, no hidden layers for linear model
-        '''
+                 prior_mu=10, prior_s=0.05, num_MC_samples=100, classification=False, homoscedastic_var=None):
         super().__init__()
         
         self.prior_mu = prior_mu
         self.prior_s = prior_s
         self.num_MC_samples = num_MC_samples
         self.classification = classification
+        if homoscedastic_var:
+            self.homoscedastic_std = np.sqrt(homoscedastic_var)
+        else:
+            self.homoscedastic_std = None
         self.class_weights = {0: 1, 1: 1}
         self.mean_likelihood = None
         self.log_prior = None
@@ -289,7 +262,7 @@ class BNNBayesbyBackprop(nn.Module):
 
         # self.model = BNN(38, self.prior_mu, self.prior_s)
         self.model = BNN(input_dim, core_hidden_layers, mu_hidden_layers, log_s_hidden_layers,
-                         self.prior_mu, self.prior_s, preset, classification)
+                         self.prior_mu, self.prior_s, classification)
 
 #         for debugging
         self.last_batch = False
@@ -304,10 +277,11 @@ class BNNBayesbyBackprop(nn.Module):
             nn_output_Nx2 = self.model(X_ND)
             nn_output_mu_N = nn_output_Nx2[:,0]
             nn_output_log_s_N = nn_output_Nx2[:,1]
-            if epoch < 50:
-                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
-            elif (epoch >= 50) and (epoch < 70):
-                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
+            if epoch < 60:
+#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
+                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.001), max=np.log(10))
+#             elif (epoch >= 50) and (epoch < 70):
+#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
 #             elif (epoch >= 15) and (epoch < 30):
 #                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=25)
 
@@ -368,8 +342,11 @@ class BNNBayesbyBackprop(nn.Module):
 
             for i in range(MC_samples): 
                 e = torch.Tensor(size=(y_N.shape)).normal_(0, 1.0)
-                #s_N = nn_output_mu_N + e * 0.1
-                s_N = nn_output_mu_N + e * torch.exp(nn_output_log_s_N)
+                if self.homoscedastic_std:
+                    stds = self.homoscedastic_std
+                else:
+                    stds = torch.exp(nn_output_log_s_N)
+                s_N = nn_output_mu_N + e * stds
                 s_N_list.append(s_N)
 
             # s_NxMC is NxMC where each row holds MC samples, s ~ N(mu(X_n), log_s(X_n))
