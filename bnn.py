@@ -124,7 +124,8 @@ class BNN(nn.Module):
           self.input_dim = input_dim
           self.prior_mu = prior_mu
           self.prior_s = prior_s
-          self.activ = nn.LeakyReLU()
+#           self.activ = nn.LeakyReLU()
+          self.activ = nn.Tanh()
           self.core_layers = nn.ModuleList()
           self.mu_layers = nn.ModuleList()
           self.log_s_layers = nn.ModuleList()
@@ -305,10 +306,11 @@ class BNNBayesbyBackprop(nn.Module):
             nn_output_Nx2 = self.model(X_ND)
             nn_output_mu_N = nn_output_Nx2[:,0]
             nn_output_log_s_N = nn_output_Nx2[:,1]
-            if epoch < 50:
-                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
-            elif (epoch >= 50) and (epoch < 70):
-                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
+            if epoch < 60:
+#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.1), max=np.log(0.1))
+                nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.001), max=np.log(10))
+#             elif (epoch >= 50) and (epoch < 70):
+#                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.01), max=np.log(5))
 #             elif (epoch >= 15) and (epoch < 30):
 #                 nn_output_log_s_N = torch.clamp(nn_output_log_s_N, min=np.log(0.0001), max=25)
 
