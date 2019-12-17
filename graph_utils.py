@@ -1,5 +1,9 @@
-
 import matplotlib.pyplot as plt
+from sklearn.calibration import calibration_curve
+import torch
+import numpy as np
+
+
 
 
 """
@@ -47,3 +51,44 @@ def graphCols(df, cols, ylabel, plotDim1, plotDim2):
     plt.show()
 
 """
+
+def calibrationPlot(trainedModel, y_test, X_test, title=None, n_bins=10, pred_prob_hist=False, filename=None):
+    n_bins = 10
+    calibration_mc_samples = 1000
+
+    sample_pred_list = []
+    for s in range(calibration_mc_samples):
+        sample_pred = trainedModel.model(torch.tensor(X_test, dtype=torch.float), predict=True).detach().numpy()
+        sample_pred_list.append(sample_pred)
+        
+    # Each row is a sample, columns are datapoints; average across columns for probability
+    sample_preds = np.vstack(sample_pred_list).T
+    y_prob = np.mean(sample_preds, axis=1)
+    true_prob, pred_prob = calibration_curve(y_test, y_prob, n_bins=n_bins, strategy='uniform')
+
+    if pred_prob_hist:
+        fig = plt.figure(figsize=(10,5))
+        ax = fig.add_subplot(121)
+    else:
+        fig = plt.figure(figsize=(5,5))
+        ax = fig.add_subplot(111)
+        
+
+    if title:
+        ax.set_title("Calibration Plot\n{}".format(title))
+    else:
+        ax.set_title("Calibration Plot")
+    ax.set_xlabel("Predicted Probability")
+    ax.set_ylabel("True Probability")
+    ax.plot([i/10 for i in range(0, 11)], [i /10 for i in range(0, 11)], c='black')
+    ax.plot(pred_prob, true_prob)
+    
+    if pred_prob_hist:
+        ax = fig.add_subplot(122)
+        ax.set_title("Histogram of Predicted Probabilities")
+        ax.hist(y_prob)
+
+    plt.show()
+    if filename:
+        plt.savefig(filename)
+
