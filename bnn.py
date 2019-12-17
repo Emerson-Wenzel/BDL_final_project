@@ -169,7 +169,7 @@ class BNN(nn.Module):
           self.pred_sigmoid = nn.Sigmoid()
 
 
-    def forward(self, X_ND, predict=False, num_preds=1):
+    def forward(self, X_ND, predict=False, num_preds=1, threshold=True):
           if isinstance(X_ND, np.ndarray):
               X_ND = torch.tensor(X_ND, dtype=torch.float)
 
@@ -231,12 +231,11 @@ class BNN(nn.Module):
 
                   # need to look if 1 is churn or not churn in dataset
                   prob_of_one = self.pred_sigmoid(continuous_pred)
-
-                  pred = (prob_of_one > self.classification_threshold)
-#                   print("pred: ", pred[:7])
-#                   print("prob of 1: ", prob_of_one[:5])
-
-                  output = pred
+                  if threshold:
+                      pred = (prob_of_one > self.classification_threshold)
+                      output = pred
+                  else:
+                      output = prob_of_one
               else:
                   output = output[:,0]
 
