@@ -1,8 +1,5 @@
-import numpy as np
-import pandas as pd
-import copy
-
-def shuffle_X_y(X, y):
+def shuffle_X_y(X, y, seed=0):
+    np.random.seed(seed)
     random_mask = np.random.permutation(len(y))
     X_rand = X.iloc[random_mask]
     y_rand = y.iloc[random_mask]
@@ -15,11 +12,11 @@ def train_test_split(X, y, train_ratio=0.8):
     X_rand, y_rand = shuffle_X_y(X, y)
     
     split_ind = int(train_ratio * len(y))
-    X_train = X_rand.iloc[:split_ind].reset_index()
-    y_train = y_rand.iloc[:split_ind].reset_index()
+    X_train = X_rand.iloc[:split_ind].reset_index(drop=True)
+    y_train = y_rand.iloc[:split_ind].reset_index(drop=True)
     
-    X_test = X_rand.iloc[split_ind:].reset_index()
-    y_test = y_rand.iloc[split_ind:].reset_index()
+    X_test = X_rand.iloc[split_ind:].reset_index(drop=True)
+    y_test = y_rand.iloc[split_ind:].reset_index(drop=True)
     
     return X_train, y_train, X_test, y_test
     
@@ -57,4 +54,4 @@ def balance_data_by_label(X, y, target_1_0_ratio):
         
         X_rand, y_rand = shuffle_X_y(X, y)
         
-    return X_rand.reset_index(), y_rand.reset_index()
+    return X_rand.to_numpy(), y_rand.to_numpy().reshape(-1)
