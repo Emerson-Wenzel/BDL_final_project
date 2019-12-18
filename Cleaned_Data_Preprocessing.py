@@ -1,3 +1,7 @@
+import numpy as np
+import copy
+import pandas as pd
+
 def shuffle_X_y(X, y, seed=0):
     np.random.seed(seed)
     random_mask = np.random.permutation(len(y))
