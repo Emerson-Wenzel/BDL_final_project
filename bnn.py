@@ -402,14 +402,16 @@ class BNNBayesbyBackprop(nn.Module):
         header = strToWrite + ",log_prior,log_posterior,mean_likelihood,reg\n"
         return header
 
-    def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False, weight_classes=False):
-        loggingFileName = str(int(time.time())) + ".csv"
-        loggingFileName = "logging.csv"
-        print("Data being saved in following file:\n{}".format(loggingFileName))
-        logger = open(loggingFileName, "w")
-        header = self._logging_header()
-        logger.write(header)
-        logger.close()
+    def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False, weight_classes=False, verbose=False, logging=False):
+        if logging:
+            loggingFileName = str(int(time.time())) + ".csv"
+            loggingFileName = "logging.csv"
+            if verbose:
+                print("Data being saved in following file:\n{}".format(loggingFileName))
+            logger = open(loggingFileName, "w")
+            header = self._logging_header()
+            logger.write(header)
+            logger.close()
 
         if weight_classes:
             n_samples = y.shape[0]
@@ -447,24 +449,26 @@ class BNNBayesbyBackprop(nn.Module):
                 batch_losses.append(loss.detach().numpy())
                 loss.backward()
                 optimizer.step()
-            toWrite = []
-            # get weights
-            for layer in self.model.core_layers:
-                toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
-            for layer in self.model.mu_layers:
-                toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
-            for layer in self.model.log_s_layers:
-                toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
-            # weight grads
-            # biases
-            # bias grads
-            toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
-#             toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
-            # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad, log_prior, log_posterior, mean_likelihood
-            strToWrite = ','.join(map(str, toWrite))
-            logger = open(loggingFileName, "a")
-            logger.write(strToWrite + '\n')
-            logger.close()
+
+            if logging:
+                toWrite = []
+                # get weights
+                for layer in self.model.core_layers:
+                    toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
+                for layer in self.model.mu_layers:
+                    toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
+                for layer in self.model.log_s_layers:
+                    toWrite.append(layer.W_mu_DO.detach().numpy().T.flatten())
+                # weight grads
+                # biases
+                # bias grads
+                toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
+    #             toWrite = [item for sublist in toWrite for item in sublist] + [self.log_prior, self.log_posterior, self.mean_likelihood, self.reg]
+                # w1_1, w1_2, w2_1, w2_2, w1_1_grad, w1_2_grad, w2_1_grad, w2_2_grad, b_1, b_2, b_1_grad, b_2_grad, log_prior, log_posterior, mean_likelihood
+                strToWrite = ','.join(map(str, toWrite))
+                logger = open(loggingFileName, "a")
+                logger.write(strToWrite + '\n')
+                logger.close()
 
 ##                if np.isnan(self.model.l1.W_mu_DO.detach().numpy()).any():
 #                    breakTime = True
@@ -535,7 +539,8 @@ class BNNBayesbyBackprop(nn.Module):
 
                 recall = true_pos / total_real_pos  
 #                 print('var weight: ', self.model.l1.W_mu_DO[0][1].detach().numpy(), 'bias: ', self.model.l1.b_mu_O[1].detach().numpy())
-                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc)
+                if verbose:
+                    print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc)
 #                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc,
 #                       '\tb: ', self.model.l1.b_mu_O[1].detach().numpy(), '\tW_1:', self.model.l1.W_mu_DO[0][1].detach().numpy(),
 #                       '\tW_2: ',  self.model.l1.W_mu_DO[1][1].detach().numpy())
@@ -543,8 +548,9 @@ class BNNBayesbyBackprop(nn.Module):
             else: 
             # regression accuracy
                 MAE = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
-                print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE, 
-                      '\tb: ', self.model.l1.b_mu_O[1].detach().numpy(), '\tW:', self.model.l1.W_mu_DO[1][1].detach().numpy())
+                if verbose:
+                    print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE, 
+                          '\tb: ', self.model.l1.b_mu_O[1].detach().numpy(), '\tW:', self.model.l1.W_mu_DO[1][1].detach().numpy())
             # print()
             # print("pred: ", pred.detach().numpy()[:5])
             # print("real: ", y_full.numpy().reshape(-1)[:5])
