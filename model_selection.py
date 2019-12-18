@@ -129,7 +129,7 @@ def grid_search(X_train, y_train, param_grid, filename, cv=3):
                                                      prior_mu=0.0, prior_s=1.0,
                                                      num_MC_samples=100, 
                                                      classification=True)
-                            bnn.fit(X_train_i, y_train_i, plot=False, n_epochs=n_epochs, learning_rate=lr, batch_size=1000)
+                            bnn.fit(X_train_i, y_train_i, plot=False, n_epochs=n_epochs, learning_rate=lr, batch_size=1000, verbose=1)
                             preds = bnn.model(X_val_i, predict=True)
                             precision, recall = precision_score(y_val_i, preds), recall_score(y_val_i, preds)
                             f_beta, acc = fbeta_score(y_val_i, preds, beta=1.0), accuracy_score(y_val_i, preds)

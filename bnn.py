@@ -401,11 +401,11 @@ class BNNBayesbyBackprop(nn.Module):
         header = strToWrite + ",log_prior,log_posterior,mean_likelihood,reg\n"
         return header
 
-    def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False, weight_classes=False, verbose=False, logging=False):
+    def fit(self, X, y, learning_rate=0.001, n_epochs=100, batch_size=1000, plot=False, weight_classes=False, verbose=0, logging=False):
         if logging:
             loggingFileName = str(int(time.time())) + ".csv"
             loggingFileName = "logging.csv"
-            if verbose:
+            if verbose > 1:
                 print("Data being saved in following file:\n{}".format(loggingFileName))
             logger = open(loggingFileName, "w")
             header = self._logging_header()
@@ -538,8 +538,12 @@ class BNNBayesbyBackprop(nn.Module):
 
                 recall = true_pos / total_real_pos  
 #                 print('var weight: ', self.model.l1.W_mu_DO[0][1].detach().numpy(), 'bias: ', self.model.l1.b_mu_O[1].detach().numpy())
-                if verbose:
-                    print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc)
+                if verbose == 1:
+                    if e % 50 == 0:
+                        print("Epoch: ", e, " / ", n_epochs, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc)
+                elif verbose > 1:
+                        print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc)
+
 #                 print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tacc: ", acc,
 #                       '\tb: ', self.model.l1.b_mu_O[1].detach().numpy(), '\tW_1:', self.model.l1.W_mu_DO[0][1].detach().numpy(),
 #                       '\tW_2: ',  self.model.l1.W_mu_DO[1][1].detach().numpy())
@@ -547,7 +551,7 @@ class BNNBayesbyBackprop(nn.Module):
             else: 
             # regression accuracy
                 MAE = torch.abs(pred - y_full.flatten()).mean().detach().numpy()
-                if verbose:
+                if verbose > 0:
                     print("Epoch: ", e, "\tLoss: ", cur_epoch_loss, "\tMAE: ", MAE, 
                           '\tb: ', self.model.l1.b_mu_O[1].detach().numpy(), '\tW:', self.model.l1.W_mu_DO[1][1].detach().numpy())
             # print()
