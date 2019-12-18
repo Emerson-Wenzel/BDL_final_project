@@ -2,11 +2,17 @@ import numpy as np
 import pandas as pd
 import copy
 
-
-def train_test_split(X, y, train_ratio=0.8):
+def shuffle_X_y(X, y):
     random_mask = np.random.permutation(len(y))
     X_rand = X.iloc[random_mask]
     y_rand = y.iloc[random_mask]
+    
+    return X_rand, y_rand
+
+# Splits given X and y into X_train, y_train, X_test, and y_test
+# Resets index of dataframes.
+def train_test_split(X, y, train_ratio=0.8):
+    X_rand, y_rand = shuffle_X_y(X, y)
     
     split_ind = int(train_ratio * len(y))
     X_train = X_rand.iloc[:split_ind].reset_index()
@@ -17,7 +23,8 @@ def train_test_split(X, y, train_ratio=0.8):
     
     return X_train, y_train, X_test, y_test
     
-
+# Balances binary dataset passed in: increases number of positive labels by duplicating data with positive labels
+# Shuffles the dataframes and resets the indexes.
 def balance_data_by_label(X, y, target_1_0_ratio):
     mask_1 = pd.Series([y['y'] == 1][0])
     X_1 = X.loc[mask_1]
@@ -45,7 +52,9 @@ def balance_data_by_label(X, y, target_1_0_ratio):
 #         y_to_append = np.ones((int(num_dupes * num_1), 1))
 #         X = np.vstack((X, X_to_append))
 #         y = np.vstack((y, y_to_append))
-        X = X.append(copy.deepcopy(X_1.loc[:int(num_dupes * num_1)]))
-        y = y.append(copy.deepcopy(y_1.loc[:int(num_dupes * num_1)]))
+        X = X.append(copy.deepcopy(X_1.iloc[:int(num_dupes * num_1)]))
+        y = y.append(copy.deepcopy(y_1.iloc[:int(num_dupes * num_1)]))
         
-    return X.reset_index(), y.reset_index()
+        X_rand, y_rand = shuffle_X_y(X, y)
+        
+    return X_rand.reset_index(), y_rand.reset_index()
