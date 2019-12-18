@@ -1,2 +1,6 @@
 *.pyc
 *.png
+
+bigData/X.csv
+bigData/y.csv
+
